@@ -6,7 +6,7 @@ description   = "A new awesome nimble package"
 license       = "MIT"
 srcDir        = "src"
 bin           = @["bench"]
-backend       = "cpp"
+# backend       = "cpp"
 
 
 # Dependencies

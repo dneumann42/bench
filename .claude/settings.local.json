@@ -15,7 +15,10 @@
       "Bash(git clone:*)",
       "Bash(nim cpp:*)",
       "Bash(git:*)",
-      "Bash(grep -n \"proc addAction\\\\|proc menuBar\\\\|onTriggered\" ~/.nimble/pkgcache/nim-seaqt-qt6.4/seaqt/QtWidgets/gen_qmainwindow.nim | head -15\ngrep -rn \"proc addAction\\\\|proc onTriggered\" ~/.nimble/pkgcache/nim-seaqt-qt6.4/seaqt/QtCore/gen_qobject.nim 2>/dev/null | head -5)"
+      "Bash(grep -n \"proc addAction\\\\|proc menuBar\\\\|onTriggered\" ~/.nimble/pkgcache/nim-seaqt-qt6.4/seaqt/QtWidgets/gen_qmainwindow.nim | head -15\ngrep -rn \"proc addAction\\\\|proc onTriggered\" ~/.nimble/pkgcache/nim-seaqt-qt6.4/seaqt/QtCore/gen_qobject.nim 2>/dev/null | head -5)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(cat:*)"
     ]
   }
 }
