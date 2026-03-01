@@ -3,8 +3,13 @@ import seaqt/[qwidget, qpushbutton, qvboxlayout, qhboxlayout, qlayout, qlabel,
               qstackedwidget, qfiledialog, qplaintextedit, qfont,
               qpixmap, qpaintdevice, qpainter, qcolor, qicon, qsize,
               qsvgrenderer, qabstractbutton, qshortcut, qkeysequence,
-              qpalette, qlineargradient]
+              qpalette, qlineargradient,
+              qlineedit, qcheckbox, qtextdocument, qtextcursor, qtextedit,
+              qregularexpression, qbrush, qtextformat]
 import bench/[buffers, highlight]
+
+{.compile("search_extra.cpp", gorge("pkg-config --cflags Qt6Widgets")).}
+proc createDefaultExtraSelection(): pointer {.importc: "QTextEditExtraSelection_createDefault".}
 
 type
   Pane* = ref object
@@ -24,6 +29,12 @@ type
     openProjectRowH: pointer
     openModuleCb: proc(pane: Pane) {.raises: [].}
     openProjectCb: proc(pane: Pane) {.raises: [].}
+    searchBarH:     pointer
+    searchInputH:   pointer
+    caseCheckH:     pointer
+    regexCheckH:    pointer
+    matchPositions: seq[(cint, cint)]
+    matchIndex:     int
 
 const StatusDark = ""
 const StatusLight = "★"
@@ -159,12 +170,54 @@ proc newPane*(
   headerBar.owned = false
   headerBar.setLayout(QLayout(h: headerLayout.h, owned: false))
 
-  # Outer container: header bar + stack
+  # --- Search bar ---
+  var searchInput = QLineEdit.create()
+  searchInput.owned = false
+  searchInput.setPlaceholderText("Search…")
+
+  var caseCheck = QCheckBox.create("Aa")
+  caseCheck.owned = false
+
+  var regexCheck = QCheckBox.create(".*")
+  regexCheck.owned = false
+
+  var prevBtn = QPushButton.create("▲")
+  prevBtn.owned = false
+  prevBtn.setFlat(true)
+  QWidget(h: prevBtn.h, owned: false).setFixedSize(cint 22, cint 22)
+
+  var nextBtn = QPushButton.create("▼")
+  nextBtn.owned = false
+  nextBtn.setFlat(true)
+  QWidget(h: nextBtn.h, owned: false).setFixedSize(cint 22, cint 22)
+
+  var searchCloseBtn = QPushButton.create("×")
+  searchCloseBtn.owned = false
+  searchCloseBtn.setFlat(true)
+  QWidget(h: searchCloseBtn.h, owned: false).setFixedSize(cint 22, cint 22)
+
+  var searchLayout = QHBoxLayout.create()
+  searchLayout.owned = false
+  QLayout(h: searchLayout.h, owned: false).setContentsMargins(cint 4, cint 2, cint 4, cint 2)
+  searchLayout.addWidget(QWidget(h: searchInput.h, owned: false), cint 1, cint 0)
+  searchLayout.addWidget(QWidget(h: caseCheck.h, owned: false), cint 0, cint 0)
+  searchLayout.addWidget(QWidget(h: regexCheck.h, owned: false), cint 0, cint 0)
+  searchLayout.addWidget(QWidget(h: prevBtn.h, owned: false), cint 0, cint 0)
+  searchLayout.addWidget(QWidget(h: nextBtn.h, owned: false), cint 0, cint 0)
+  searchLayout.addWidget(QWidget(h: searchCloseBtn.h, owned: false), cint 0, cint 0)
+
+  var searchBar = QWidget.create()
+  searchBar.owned = false
+  searchBar.setLayout(QLayout(h: searchLayout.h, owned: false))
+  QWidget(h: searchBar.h, owned: false).hide()
+
+  # Outer container: header bar + search bar + stack
   var outerLayout = QVBoxLayout.create()
   outerLayout.owned = false
   QLayout(h: outerLayout.h, owned: false).setContentsMargins(cint 0, cint 0, cint 0, cint 0)
   QLayout(h: outerLayout.h, owned: false).setSpacing(cint 0)
   outerLayout.addWidget(QWidget(h: headerBar.h, owned: false), cint(0), cint(0))
+  outerLayout.addWidget(QWidget(h: searchBar.h, owned: false), cint(0), cint(0))
   outerLayout.addWidget(QWidget(h: stack.h, owned: false), cint(0), cint(0))
   var container = QWidget.create()
   container.owned = false
@@ -185,6 +238,10 @@ proc newPane*(
   result.openProjectRowH = openProjectRow.h
   result.openModuleCb    = onOpenModule
   result.openProjectCb   = onOpenProject
+  result.searchBarH      = searchBar.h
+  result.searchInputH    = searchInput.h
+  result.caseCheckH      = caseCheck.h
+  result.regexCheckH     = regexCheck.h
 
   let pane = result
   QPlainTextEdit(h: pane.editor.h, owned: false).onTextChanged do() {.raises: [].}:
@@ -217,6 +274,117 @@ proc newPane*(
   hSplitBtn.onClicked do() {.raises: [].}: onHSplit(pane)
   closeBtn.onClicked do() {.raises: [].}: onClose(pane)
 
+  # --- Search helpers ---
+  proc moveToCurrent(pane: Pane) {.raises: [].} =
+    if pane.matchPositions.len == 0: return
+    let (s, e) = pane.matchPositions[pane.matchIndex]
+    let ed = QPlainTextEdit(h: pane.editor.h, owned: false)
+    var cur = ed.textCursor()
+    cur.setPosition(s)
+    cur.setPosition(e, cint(QTextCursorMoveModeEnum.KeepAnchor))
+    ed.setTextCursor(cur)
+    ed.ensureCursorVisible()
+
+  proc doSearch(pane: Pane) {.raises: [].} =
+    let ed    = QPlainTextEdit(h: pane.editor.h, owned: false)
+    let inp   = QLineEdit(h: pane.searchInputH, owned: false)
+    let query = inp.text()
+    if query.len == 0:
+      ed.setExtraSelections(newSeq[QTextEditExtraSelection]())
+      pane.matchPositions = @[]
+      return
+    let caseSens = QAbstractButton(h: pane.caseCheckH, owned: false).isChecked()
+    let useRx    = QAbstractButton(h: pane.regexCheckH, owned: false).isChecked()
+    let flags    = if caseSens: cint(QTextDocumentFindFlagEnum.FindCaseSensitively)
+                   else: cint(0)
+
+    var fmt = QTextCharFormat.create()
+    QTextFormat(h: fmt.h, owned: false).setBackground(
+      QBrush.create(QColor.create("#4a4a00")))
+
+    var rx = QRegularExpression.create(query)
+    if not caseSens:
+      rx.setPatternOptions(
+        cint(QRegularExpressionPatternOptionEnum.CaseInsensitiveOption))
+
+    let doc = ed.document()
+    var pos     = cint(0)
+    var matches: seq[(cint, cint)]
+    var sels:    seq[QTextEditExtraSelection]
+
+    while true:
+      var cur = if useRx: doc.find(rx, pos)
+                else:     doc.find(query, pos, flags)
+      if cur.isNull(): break
+      let s = cur.selectionStart()
+      let e = cur.selectionEnd()
+      if e <= pos: break  # zero-length match guard
+      matches.add((s, e))
+      var sel = QTextEditExtraSelection(h: createDefaultExtraSelection(), owned: true)
+      sel.setCursor(cur)
+      sel.setFormat(fmt)
+      sels.add(sel)
+      pos = e
+
+    pane.matchPositions = matches
+    pane.matchIndex     = 0
+    ed.setExtraSelections(sels)
+    moveToCurrent(pane)
+
+  proc closeSearch(pane: Pane) {.raises: [].} =
+    QWidget(h: pane.searchBarH, owned: false).hide()
+    QPlainTextEdit(h: pane.editor.h, owned: false).setExtraSelections(
+      newSeq[QTextEditExtraSelection]())
+    pane.matchPositions = @[]
+    QWidget(h: pane.editor.h, owned: false).setFocus()
+
+  # --- Search signal connections ---
+  searchInput.onTextChanged do(text: openArray[char]) {.raises: [].}:
+    doSearch(pane)
+
+  caseCheck.onStateChanged do(state: cint) {.raises: [].}:
+    doSearch(pane)
+
+  regexCheck.onStateChanged do(state: cint) {.raises: [].}:
+    doSearch(pane)
+
+  searchInput.onReturnPressed do() {.raises: [].}:
+    if pane.matchPositions.len > 0:
+      pane.matchIndex = (pane.matchIndex + 1) mod pane.matchPositions.len
+      moveToCurrent(pane)
+
+  nextBtn.onClicked do() {.raises: [].}:
+    if pane.matchPositions.len > 0:
+      pane.matchIndex = (pane.matchIndex + 1) mod pane.matchPositions.len
+      moveToCurrent(pane)
+
+  prevBtn.onClicked do() {.raises: [].}:
+    if pane.matchPositions.len > 0:
+      pane.matchIndex =
+        (pane.matchPositions.len + pane.matchIndex - 1) mod pane.matchPositions.len
+      moveToCurrent(pane)
+
+  searchCloseBtn.onClicked do() {.raises: [].}:
+    closeSearch(pane)
+
+  # --- Ctrl+F shortcut ---
+  var findSc = QShortcut.create(QKeySequence.create("Ctrl+F"),
+                                QObject(h: pane.container.h, owned: false))
+  findSc.owned = false
+  findSc.setContext(cint 1)  # WidgetWithChildrenShortcut
+  findSc.onActivated do() {.raises: [].}:
+    QWidget(h: pane.searchBarH, owned: false).show()
+    QWidget(h: pane.searchInputH, owned: false).setFocus()
+    doSearch(pane)
+
+  # --- Escape shortcut ---
+  var escapeSc = QShortcut.create(QKeySequence.create("Escape"),
+                                  QObject(h: pane.container.h, owned: false))
+  escapeSc.owned = false
+  escapeSc.setContext(cint 1)  # WidgetWithChildrenShortcut
+  escapeSc.onActivated do() {.raises: [].}:
+    closeSearch(pane)
+
 proc setHeaderFocus*(pane: Pane, focused: bool, isDark: bool) =
   let hbw = QWidget(h: pane.headerBar.h, owned: false)
   if focused:
@@ -246,6 +414,8 @@ proc setBuffer*(pane: Pane, buf: Buffer) =
   pane.statusLabel.setText(StatusDark)
   pane.stack.setCurrentIndex(cint(1))
   pane.buffer = buf
+  QWidget(h: pane.searchBarH, owned: false).hide()
+  pane.matchPositions = @[]
 
 proc clearBuffer*(pane: Pane) =
   pane.label.setText("")
@@ -254,6 +424,8 @@ proc clearBuffer*(pane: Pane) =
   pane.statusLabel.setText(StatusDark)
   pane.stack.setCurrentIndex(cint(0))
   pane.buffer = nil
+  QWidget(h: pane.searchBarH, owned: false).hide()
+  pane.matchPositions = @[]
 
 proc openModuleDialog*(pane: Pane) {.raises: [].} =
   let fn = QFileDialog.getOpenFileName(QWidget(h: pane.container.h, owned: false))
