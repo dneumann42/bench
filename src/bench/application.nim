@@ -1,19 +1,16 @@
 import seaqt/[qapplication, qwidget, qfiledialog, qmainwindow, qtoolbar,
-              qsplitter, qpushbutton, qvboxlayout]
-import bench/[toolbar, buffers, projects, projectdialog]
+              qsplitter]
+import bench/[toolbar, buffers, projects, projectdialog, theme, pane]
 
 type
-  BenchPanel = object
-    pane: QWidget
-    bufferName: string
-
   Application* = ref object
     bufferManager: BufferManager
     toolbar: Toolbar
     projectManager: ProjectManager
     root: QMainWindow
     splitter: QSplitter
-    panels: seq[BenchPanel]
+    panels: seq[Pane]
+    theme: Theme
 
 proc buffers*(app: Application): lent BufferManager =
   result = app.bufferManager
@@ -34,25 +31,23 @@ proc equalizeSplits*(self: Application) =
     sizes[i] = cint(1)
   self.splitter.setSizes(sizes)
 
-proc onNewPane(root: QMainWindow, splitter: QSplitter) =
-  var btn = QPushButton.create("Open Module")
-  btn.owned = false
-  var layout = QVBoxLayout.create()
-  layout.owned = false
-  layout.addStretch()
-  layout.addWidget(QWidget(h: btn.h, owned: false), cint(0), cint(4))  # AlignHCenter = 4
-  layout.addStretch()
-  var pane = QWidget.create()
-  pane.owned = false
-  pane.setLayout(QLayout(h: layout.h, owned: false))
-  let root = QWidget(h: root.h, owned: false)
-  btn.onClicked do():
-    let fn = QFileDialog.getOpenFileName(root)
-    echo fn
-  splitter.addWidget(QWidget(h: pane.h, owned: false))
+proc addPane(self: Application) =
+  var p: Pane
+  p = newPane(proc(pane: Pane, path: string) {.raises: [].} =
+    let buf = self.bufferManager.openFile(path)
+    pane.setBuffer(buf))
+  self.splitter.addWidget(p.widget())
+  self.panels.add(p)
+
+proc closeBuffer*(self: Application, name: string) =
+  for panel in self.panels:
+    if panel.bufferName == name:
+      panel.clearBuffer()
+  self.bufferManager.close(name)
 
 proc build*(self: Application) =
   self.root = QMainWindow.create()
+  QWidget(h: self.root.h, owned: false).setMinimumSize(cint(800), cint(480))
   self.toolbar.build()
 
   self.root.addToolBar(QToolBar(h: self.toolbar.widget().h, owned: false))
@@ -61,20 +56,32 @@ proc build*(self: Application) =
   self.root.setCentralWidget(QWidget(h: self.splitter.h, owned: false))
   self.splitter.owned = false   # Qt (QMainWindow) owns the C++ object now
 
+  self.theme = Dark
+  applyTheme(Dark)
+
+  self.toolbar.onThemeToggle do():
+    self.theme = if self.theme == Dark: Light else: Dark
+    applyTheme(self.theme)
+    self.toolbar.setThemeBtnText(if self.theme == Dark: "☀" else: "☾")
+
   self.toolbar.onTriggered(NewProject) do():
     showNewProjectDialog(QWidget(h: self.root.h, owned: false), self.projectManager)
 
   self.toolbar.onTriggered(OpenFile) do():
-    let fn = QFileDialog.getOpenFileName(QWidget(h: self.root.h, owned: false))
-    echo fn
+    if self.panels.len > 0:
+      let fn = QFileDialog.getOpenFileName(QWidget(h: self.root.h, owned: false))
+      if fn.len > 0:
+        let buf = self.bufferManager.openFile(fn)
+        self.panels[0].setBuffer(buf)
 
   self.toolbar.onTriggered(Quit) do():
     QApplication.quit()
 
   self.toolbar.onNewPane do():
-    self.root.onNewPane(self.splitter)
+    self.addPane()
+    self.equalizeSplits()
 
-  self.root.onNewPane(self.splitter) # initialize at least one
+  self.addPane()  # initialize at least one
   self.equalizeSplits()
 
 proc show*(self: Application) =

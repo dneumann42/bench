@@ -1,4 +1,4 @@
-import std/[options, os, dirs]
+import std/[options, os, dirs, strformat]
 
 import toml_serialization
 
@@ -40,7 +40,31 @@ proc write*(self: ProjectManager) =
     echo "Failed to save projects: ", e.msg
 
 proc createProject*(self: var ProjectManager, project: Project, noWrite = false) =
-  self.projects.add(project.path / project.name)
+  let projectDir = project.path / project.name
+  self.projects.add(projectDir)
+
+  try:
+    createDir(projectDir / "src")
+
+    let nimbleContents = fmt"""
+# Package
+version     = "{project.version}"
+author      = "{project.author}"
+description = "{project.description}"
+license     = "{project.license}"
+srcDir      = "src"
+
+# Dependencies
+requires "nim >= 2.0.0"
+"""
+
+    writeFile(projectDir / project.name & ".nimble", nimbleContents)
+    writeFile(projectDir / "src" / project.name & ".nim", "")
+  except OSError as e:
+    echo "Failed to create project files: ", e.msg
+  except IOError as e:
+    echo "Failed to create project files: ", e.msg
+
   if not noWrite:
     self.write()
 

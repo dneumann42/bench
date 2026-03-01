@@ -1,3 +1,4 @@
+import std/[os]
 import seaqt/[qplaintextedit]
 import bench/highlight
 
@@ -23,7 +24,8 @@ proc new*(T: typedesc[Buffer], path = ""): T =
     else:
       inc scratchCount
       "scratch-" & $scratchCount
-  let editor = QPlainTextEdit.create()
+  var editor = QPlainTextEdit.create()
+  editor.owned = false  # Qt manages lifetime when added to a pane
   let hl = NimHighlighter()
   hl.attach(editor.document())
   T(name: n, path: path, editor: editor, highlighter: hl)
@@ -41,3 +43,20 @@ iterator items*(bm: BufferManager): Buffer =
     yield b
 
 proc len*(bm: BufferManager): int = bm.buffers.len
+
+proc openFile*(bm: var BufferManager, path: string): Buffer =
+  for buf in bm.buffers:
+    if buf.path == path:
+      return buf
+  result = Buffer.new(path)
+  try:
+    result.editor.setPlainText(readFile(path))
+  except:
+    discard
+  bm.add(result)
+
+proc close*(bm: var BufferManager, name: string) =
+  for i in 0..<bm.buffers.len:
+    if bm.buffers[i].name == name:
+      bm.buffers.delete(i)
+      return

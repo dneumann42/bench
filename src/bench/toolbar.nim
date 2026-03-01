@@ -22,6 +22,7 @@ type
     toolbar: QToolbar
     fileMenu: ToolMenu
     newPaneBtn: QToolButton
+    themeBtn: QToolButton
 
 proc build(self: ToolMenu) =
   self.button = QToolButton.create()
@@ -62,5 +63,20 @@ proc build*(self: Toolbar) =
   self.newPaneBtn.setText("New Pane")
   discard self.toolbar.addWidget(self.newPaneBtn)
 
+  var spacer = QWidget.create()
+  spacer.owned = false
+  spacer.setSizePolicy(cint(7), cint(5))  # Expanding x Preferred
+  discard self.toolbar.addWidget(spacer)
+
+  self.themeBtn = QToolButton.create()
+  self.themeBtn.setText("☀")  # dark is default; show sun = switch to light
+  discard self.toolbar.addWidget(self.themeBtn)
+
 proc onNewPane*(self: Toolbar, triggered: proc() {.raises: [].}) =
   self.newPaneBtn.onClicked(triggered)
+
+proc onThemeToggle*(self: Toolbar, triggered: proc() {.raises: [].}) =
+  self.themeBtn.onClicked(triggered)
+
+proc setThemeBtnText*(self: Toolbar, text: string) =
+  self.themeBtn.setText(text)
