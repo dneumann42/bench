@@ -106,6 +106,7 @@ proc insertCol(self: Application, afterPane: Pane, col: QSplitter) =
   let srcW = oldSizes[idx]
   var newCol = QSplitter.create(cint 2)   # vertical
   newCol.setHandleWidth(cint 1)
+  QWidget(h: newCol.h, owned: false).setAutoFillBackground(true)
   newCol.owned = false
   let p = self.makePane(newCol)
   newCol.addWidget(p.widget())
@@ -138,6 +139,7 @@ proc insertRow(self: Application, afterPane: Pane, col: QSplitter) =
 proc addColumn(self: Application) =
   var col = QSplitter.create(cint 2)    # vertical
   col.setHandleWidth(cint 1)
+  QWidget(h: col.h, owned: false).setAutoFillBackground(true)
   col.owned = false
   let p = self.makePane(col)
   col.addWidget(p.widget())
@@ -161,6 +163,7 @@ proc build*(self: Application) =
 
   self.splitter = QSplitter.create(cint(1))
   self.splitter.setHandleWidth(cint 1)
+  QWidget(h: self.splitter.h, owned: false).setAutoFillBackground(true)
   self.root.setCentralWidget(QWidget(h: self.splitter.h, owned: false))
   self.splitter.owned = false
 
