@@ -1,17 +1,22 @@
 import std/os
 import seaqt/[qwidget, qpushbutton, qvboxlayout, qhboxlayout, qlayout, qlabel,
-              qstackedwidget, qfiledialog, qplaintextedit]
+              qstackedwidget, qfiledialog, qplaintextedit, qfont]
 import bench/[buffers, highlight]
 
 type
   Pane* = ref object
     container: QWidget
     label: QLabel
+    statusLabel: QLabel
     stack: QStackedWidget
     openModuleWidget: QWidget
     editor: QPlainTextEdit
     highlighter: NimHighlighter
+    changed*: bool
     bufferName*: string
+
+const StatusDark = "🌑"
+const StatusLight = "🌕"
 
 proc widget*(pane: Pane): QWidget =
   QWidget(h: pane.container.h, owned: false)
@@ -37,6 +42,9 @@ proc newPane*(
 
   var editor = QPlainTextEdit.create()
   editor.owned = false
+  var editorFont = QFont.create("Monospace")
+  editorFont.setStyleHint(cint(QFontStyleHintEnum.TypeWriter))
+  QWidget(h: editor.h, owned: false).setFont(editorFont)
   let hl = NimHighlighter()
   hl.attach(editor.document())
 
@@ -47,6 +55,9 @@ proc newPane*(
 
   var label = QLabel.create("")
   label.owned = false
+
+  var statusLabel = QLabel.create(StatusDark)
+  statusLabel.owned = false
 
   var vSplitBtn = QPushButton.create("◨")
   vSplitBtn.owned = false
@@ -67,6 +78,7 @@ proc newPane*(
   headerLayout.owned = false
   QLayout(h: headerLayout.h, owned: false).setContentsMargins(cint 4, cint 2, cint 4, cint 2)
   headerLayout.addWidget(QWidget(h: label.h, owned: false), cint(0), cint(0))
+  headerLayout.addWidget(QWidget(h: statusLabel.h, owned: false), cint(0), cint(0))
   headerLayout.addStretch()
   headerLayout.addWidget(QWidget(h: vSplitBtn.h, owned: false), cint(0), cint(0))
   headerLayout.addWidget(QWidget(h: hSplitBtn.h, owned: false), cint(0), cint(0))
@@ -89,12 +101,17 @@ proc newPane*(
 
   result.container = container
   result.label = label
+  result.statusLabel = statusLabel
   result.stack = stack
   result.openModuleWidget = openModuleWidget
   result.editor = editor
   result.highlighter = hl
 
   let pane = result
+  QPlainTextEdit(h: pane.editor.h, owned: false).onTextChanged(proc() {.raises: [].} =
+    pane.changed = true
+    pane.statusLabel.setText(StatusLight))
+
   btn.onClicked do() {.raises: [].}:
     let fn = QFileDialog.getOpenFileName(QWidget(h: pane.stack.h, owned: false))
     if fn.len > 0:
@@ -110,11 +127,15 @@ proc setBuffer*(pane: Pane, buf: Buffer) =
   except: discard
   pane.label.setText(displayName)
   pane.editor.setPlainText(buf.content)
+  pane.changed = false
+  pane.statusLabel.setText(StatusDark)
   pane.stack.setCurrentIndex(cint(1))
   pane.bufferName = buf.name
 
 proc clearBuffer*(pane: Pane) =
   pane.label.setText("")
   pane.editor.setPlainText("")
+  pane.changed = false
+  pane.statusLabel.setText(StatusDark)
   pane.stack.setCurrentIndex(cint(0))
   pane.bufferName = ""
