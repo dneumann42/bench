@@ -233,7 +233,7 @@ proc build*(self: Application) =
 
   self.toolbar.onOpacityToggle do():
     self.opacityActive = not self.opacityActive
-    let level = if self.opacityActive: 0.85 else: 1.0
+    let level = if self.opacityActive: 0.95 else: 1.0
     self.opacityEffect.setOpacity(level)
 
   self.toolbar.onTriggered(NewProject) do():

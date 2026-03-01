@@ -1,6 +1,8 @@
 import std/[os, algorithm, strutils]
 import seaqt/[qwidget, qvboxlayout, qlayout, qdialog, qlineedit, qlistwidget,
-              qlistwidgetitem, qshortcut, qkeysequence, qobject]
+              qlistwidgetitem, qshortcut, qkeysequence, qobject,
+              qsplitter, qplaintextedit, qfont]
+import bench/highlight
 
 proc toStr(oa: openArray[char]): string {.raises: [].} =
   result = newString(oa.len)
@@ -29,7 +31,7 @@ proc showFileFinder*(parent: QWidget,
     dialog.owned = false
     let dialogH = dialog.h
     QWidget(h: dialogH, owned: false).setWindowTitle("Open File")
-    QWidget(h: dialogH, owned: false).resize(cint 480, cint 320)
+    QWidget(h: dialogH, owned: false).resize(cint 900, cint 500)
 
     var searchBox = QLineEdit.create()
     searchBox.owned = false
@@ -39,11 +41,36 @@ proc showFileFinder*(parent: QWidget,
     listWidget.owned = false
     let listH = listWidget.h
 
-    var layout = QVBoxLayout.create()
-    layout.owned = false
-    layout.addWidget(QWidget(h: searchBox.h, owned: false))
-    layout.addWidget(QWidget(h: listWidget.h, owned: false))
-    QWidget(h: dialogH, owned: false).setLayout(QLayout(h: layout.h, owned: false))
+    var leftLayout = QVBoxLayout.create()
+    leftLayout.owned = false
+    leftLayout.addWidget(QWidget(h: searchBox.h, owned: false))
+    leftLayout.addWidget(QWidget(h: listWidget.h, owned: false))
+
+    var leftPanel = QWidget.create()
+    leftPanel.owned = false
+    leftPanel.setLayout(QLayout(h: leftLayout.h, owned: false))
+
+    var preview = QPlainTextEdit.create()
+    preview.owned = false
+    preview.setReadOnly(true)
+    var previewFont = QFont.create("Monospace")
+    previewFont.setStyleHint(cint(QFontStyleHintEnum.TypeWriter))
+    QWidget(h: preview.h, owned: false).setFont(previewFont)
+    let previewHl = NimHighlighter()
+    previewHl.attach(preview.document())
+    let previewH = preview.h
+
+    var splitter = QSplitter.create(cint 1)
+    splitter.owned = false
+    splitter.addWidget(QWidget(h: leftPanel.h, owned: false))
+    splitter.addWidget(QWidget(h: preview.h, owned: false))
+    splitter.setStretchFactor(cint 0, cint 1)
+    splitter.setStretchFactor(cint 1, cint 2)
+
+    var outerLayout = QVBoxLayout.create()
+    outerLayout.owned = false
+    outerLayout.addWidget(QWidget(h: splitter.h, owned: false))
+    QWidget(h: dialogH, owned: false).setLayout(QLayout(h: outerLayout.h, owned: false))
 
     let root = try: getCurrentDir() except OSError: "."
     let allFiles = findNimFiles(root)
@@ -65,6 +92,15 @@ proc showFileFinder*(parent: QWidget,
       except: discard
 
     populate("")
+
+    listWidget.onCurrentRowChanged do(row: cint) {.raises: [].}:
+      if row >= 0:
+        try:
+          let path = root / QListWidget(h: listH, owned: false).item(row).text()
+          let content = readFile(path)
+          QPlainTextEdit(h: previewH, owned: false).setPlainText(content)
+        except:
+          QPlainTextEdit(h: previewH, owned: false).setPlainText("(could not read file)")
 
     searchBox.onTextChanged do(text: openArray[char]) {.raises: [].}:
       populate(toStr(text))
