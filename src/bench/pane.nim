@@ -1,9 +1,11 @@
-import seaqt/[qwidget, qpushbutton, qvboxlayout, qlayout,
+import seaqt/[qwidget, qpushbutton, qvboxlayout, qhboxlayout, qlayout, qlabel,
               qstackedwidget, qfiledialog, qplaintextedit]
 import bench/[buffers, highlight]
 
 type
   Pane* = ref object
+    container: QWidget
+    label: QLabel
     stack: QStackedWidget
     openModuleWidget: QWidget
     editor: QPlainTextEdit
@@ -11,9 +13,12 @@ type
     bufferName*: string
 
 proc widget*(pane: Pane): QWidget =
-  QWidget(h: pane.stack.h, owned: false)
+  QWidget(h: pane.container.h, owned: false)
 
-proc newPane*(onFileSelected: proc(pane: Pane, path: string) {.raises: [].}): Pane =
+proc newPane*(
+  onFileSelected: proc(pane: Pane, path: string) {.raises: [].},
+  onClose: proc(pane: Pane) {.raises: [].}
+): Pane =
   result = Pane()
 
   var btn = QPushButton.create("Open Module")
@@ -37,6 +42,34 @@ proc newPane*(onFileSelected: proc(pane: Pane, path: string) {.raises: [].}): Pa
   discard stack.addWidget(QWidget(h: openModuleWidget.h, owned: false))
   discard stack.addWidget(QWidget(h: editor.h, owned: false))
 
+  # Header bar: [label] [stretch] [× button]
+  var label = QLabel.create("")
+  label.owned = false
+  var closeBtn = QPushButton.create("×")
+  closeBtn.owned = false
+  closeBtn.setFlat(true)
+  QWidget(h: closeBtn.h, owned: false).setFixedSize(cint 18, cint 18)
+  var headerLayout = QHBoxLayout.create()
+  headerLayout.owned = false
+  QLayout(h: headerLayout.h, owned: false).setContentsMargins(cint 4, cint 2, cint 4, cint 2)
+  headerLayout.addWidget(QWidget(h: label.h, owned: false), cint(0), cint(0))
+  headerLayout.addStretch()
+  headerLayout.addWidget(QWidget(h: closeBtn.h, owned: false), cint(0), cint(0))
+  var headerBar = QWidget.create()
+  headerBar.owned = false
+  headerBar.setLayout(QLayout(h: headerLayout.h, owned: false))
+
+  # Outer container: header bar + stack
+  var outerLayout = QVBoxLayout.create()
+  outerLayout.owned = false
+  outerLayout.addWidget(QWidget(h: headerBar.h, owned: false), cint(0), cint(0))
+  outerLayout.addWidget(QWidget(h: stack.h, owned: false), cint(0), cint(0))
+  var container = QWidget.create()
+  container.owned = false
+  container.setLayout(QLayout(h: outerLayout.h, owned: false))
+
+  result.container = container
+  result.label = label
   result.stack = stack
   result.openModuleWidget = openModuleWidget
   result.editor = editor
@@ -48,12 +81,17 @@ proc newPane*(onFileSelected: proc(pane: Pane, path: string) {.raises: [].}): Pa
     if fn.len > 0:
       onFileSelected(pane, fn))
 
+  closeBtn.onClicked(proc() {.raises: [].} =
+    onClose(pane))
+
 proc setBuffer*(pane: Pane, buf: Buffer) =
+  pane.label.setText(buf.name)
   pane.editor.setPlainText(buf.content)
   pane.stack.setCurrentIndex(cint(1))
   pane.bufferName = buf.name
 
 proc clearBuffer*(pane: Pane) =
+  pane.label.setText("")
   pane.editor.setPlainText("")
   pane.stack.setCurrentIndex(cint(0))
   pane.bufferName = ""

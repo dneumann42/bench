@@ -45,6 +45,7 @@ proc onTriggered*(
 
 proc build*(self: Toolbar) =
   self.toolbar = QToolbar.create()
+  QWidget(h: self.toolbar.h, owned: false).setStyleSheet("QToolBar { padding: 0px; spacing: 0px; border: none; }")
 
   self.fileMenu = ToolMenu(label: "File")
   self.fileMenu.build()

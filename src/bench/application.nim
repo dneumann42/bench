@@ -33,9 +33,19 @@ proc equalizeSplits*(self: Application) =
 
 proc addPane(self: Application) =
   var p: Pane
-  p = newPane(proc(pane: Pane, path: string) {.raises: [].} =
-    let buf = self.bufferManager.openFile(path)
-    pane.setBuffer(buf))
+  p = newPane(
+    proc(pane: Pane, path: string) {.raises: [].} =
+      let buf = self.bufferManager.openFile(path)
+      pane.setBuffer(buf),
+    proc(pane: Pane) {.raises: [].} =
+      pane.widget().hide()
+      try:
+        for i in countdown(self.panels.high, 0):
+          if self.panels[i] == pane:
+            self.panels.delete(i)
+            break
+      except:
+        discard)
   self.splitter.addWidget(p.widget())
   self.panels.add(p)
 
