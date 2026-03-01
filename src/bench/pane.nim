@@ -20,6 +20,10 @@ type
     buffer*: Buffer
     fileSelectedCb: proc(pane: Pane, path: string) {.raises: [].}
     newModuleCb: proc(pane: Pane) {.raises: [].}
+    moduleBtnsRowH: pointer
+    openProjectRowH: pointer
+    openModuleCb: proc(pane: Pane) {.raises: [].}
+    openProjectCb: proc(pane: Pane) {.raises: [].}
 
 const StatusDark = ""
 const StatusLight = "★"
@@ -45,29 +49,53 @@ proc newPane*(
   onClose: proc(pane: Pane) {.raises: [].},
   onVSplit: proc(pane: Pane) {.raises: [].},
   onHSplit: proc(pane: Pane) {.raises: [].},
-  onNewModule: proc(pane: Pane) {.raises: [].}
+  onNewModule: proc(pane: Pane) {.raises: [].},
+  onOpenModule: proc(pane: Pane) {.raises: [].},
+  onOpenProject: proc(pane: Pane) {.raises: [].}
 ): Pane =
   result = Pane()
 
+  # --- Open Project row (shown when no project is open) ---
+  var openProjectBtn = QPushButton.create("Open Project")
+  openProjectBtn.owned = false
+
+  var openProjectLayout = QHBoxLayout.create(); openProjectLayout.owned = false
+  openProjectLayout.addStretch()
+  openProjectLayout.addWidget(QWidget(h: openProjectBtn.h, owned: false))
+  openProjectLayout.addStretch()
+
+  var openProjectRow = QWidget.create()
+  openProjectRow.owned = false
+  openProjectRow.setLayout(QLayout(h: openProjectLayout.h, owned: false))
+
+  # --- Module buttons row (shown when project is open) ---
   var newModuleBtn = QPushButton.create("New Module")
   newModuleBtn.owned = false
-  var btn = QPushButton.create("Open Module")
-  btn.owned = false
+  var openModuleBtn = QPushButton.create("Open Module")
+  openModuleBtn.owned = false
 
-  var btnRow = QHBoxLayout.create(); btnRow.owned = false
-  btnRow.addStretch()
-  btnRow.addWidget(QWidget(h: newModuleBtn.h, owned: false))
-  btnRow.addWidget(QWidget(h: btn.h, owned: false))
-  btnRow.addStretch()
+  var moduleBtnsLayout = QHBoxLayout.create(); moduleBtnsLayout.owned = false
+  moduleBtnsLayout.addStretch()
+  moduleBtnsLayout.addWidget(QWidget(h: newModuleBtn.h, owned: false))
+  moduleBtnsLayout.addWidget(QWidget(h: openModuleBtn.h, owned: false))
+  moduleBtnsLayout.addStretch()
 
-  var layout = QVBoxLayout.create()
-  layout.owned = false
+  var moduleBtnsRow = QWidget.create()
+  moduleBtnsRow.owned = false
+  moduleBtnsRow.setLayout(QLayout(h: moduleBtnsLayout.h, owned: false))
+  QWidget(h: moduleBtnsRow.h, owned: false).hide()  # hidden until project opened
+
+  # --- Outer layout for page 0 ---
+  var layout = QVBoxLayout.create(); layout.owned = false
   layout.addStretch()
-  layout.addLayout(QLayout(h: btnRow.h, owned: false))
+  layout.addWidget(QWidget(h: openProjectRow.h, owned: false))
+  layout.addWidget(QWidget(h: moduleBtnsRow.h, owned: false))
   layout.addStretch()
+
   var openModuleWidget = QWidget.create()
   openModuleWidget.owned = false
   openModuleWidget.setLayout(QLayout(h: layout.h, owned: false))
+  openModuleWidget.setFocusPolicy(cint 2)  # Qt::ClickFocus
 
   var editor = QPlainTextEdit.create()
   editor.owned = false
@@ -150,20 +178,21 @@ proc newPane*(
   result.openModuleWidget = openModuleWidget
   result.editor = editor
   result.highlighter = hl
-  result.fileSelectedCb = onFileSelected
-  result.newModuleCb    = onNewModule
+  result.fileSelectedCb  = onFileSelected
+  result.newModuleCb     = onNewModule
+  result.moduleBtnsRowH  = moduleBtnsRow.h
+  result.openProjectRowH = openProjectRow.h
+  result.openModuleCb    = onOpenModule
+  result.openProjectCb   = onOpenProject
 
   let pane = result
   QPlainTextEdit(h: pane.editor.h, owned: false).onTextChanged do() {.raises: [].}:
     pane.changed = true
     pane.statusLabel.setText(StatusLight)
 
-  newModuleBtn.onClicked do() {.raises: [].}: onNewModule(pane)
-
-  btn.onClicked do() {.raises: [].}:
-    let fn = QFileDialog.getOpenFileName(QWidget(h: pane.stack.h, owned: false))
-    if fn.len > 0:
-      onFileSelected(pane, fn)
+  openProjectBtn.onClicked do() {.raises: [].}: onOpenProject(pane)
+  newModuleBtn.onClicked   do() {.raises: [].}: onNewModule(pane)
+  openModuleBtn.onClicked  do() {.raises: [].}: onOpenModule(pane)
 
   proc doSave(pane: Pane) {.raises: [].} =
     if pane.buffer != nil and pane.buffer.path.len > 0:
@@ -232,3 +261,13 @@ proc openModuleDialog*(pane: Pane) {.raises: [].} =
 
 proc triggerNewModule*(pane: Pane) {.raises: [].} =
   pane.newModuleCb(pane)
+
+proc setProjectOpen*(pane: Pane, open: bool) =
+  QWidget(h: pane.moduleBtnsRowH, owned: false).setVisible(open)
+  QWidget(h: pane.openProjectRowH, owned: false).setVisible(not open)
+
+proc focus*(pane: Pane) {.raises: [].} =
+  if pane.buffer != nil:
+    QWidget(h: pane.editor.h, owned: false).setFocus()
+  else:
+    pane.container.setFocus()

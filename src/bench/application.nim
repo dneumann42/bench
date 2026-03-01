@@ -1,4 +1,4 @@
-import std/os
+import std/[os, strutils]
 import seaqt/[qapplication, qwidget, qfiledialog, qmainwindow, qtoolbar, qsplitter,
               qcoreapplication, qstatusbar, qtoolbutton, qabstractbutton,
               qshortcut, qkeysequence, qobject]
@@ -14,6 +14,7 @@ type
     splitter: QSplitter
     panels: seq[Pane]
     theme: Theme
+    currentProject: string
     runStatusBtnH:  pointer
     buildStatusBtnH: pointer
     runReopen:  proc() {.raises: [].}
@@ -39,13 +40,30 @@ proc equalizeSplits*(self: Application) =
     sizes[i] = cint(1)
   self.splitter.setSizes(sizes)
 
+proc openProject(self: Application) {.raises: [].} =
+  let dir = QFileDialog.getExistingDirectory(QWidget(h: self.root.h, owned: false))
+  if dir.len == 0: return
+  var isProject = false
+  try:
+    for kind, path in walkDir(dir):
+      if kind == pcFile and path.endsWith(".nimble"):
+        isProject = true; break
+  except: discard
+  if not isProject: return
+  self.currentProject = dir
+  for panel in self.panels:
+    panel.clearBuffer()
+    panel.setProjectOpen(true)
+  self.bufferManager = BufferManager.init()
+  try: setCurrentDir(dir) except OSError: discard
+
 # Forward declarations
 proc insertCol(self: Application, afterPane: Pane, col: QSplitter)
 proc insertRow(self: Application, afterPane: Pane, col: QSplitter)
 
 proc makePane(self: Application, col: QSplitter): Pane =
   let colH = col.h  # capture raw pointer — avoids QSplitter copy restriction
-  newPane(
+  result = newPane(
     proc(pane: Pane, path: string) {.raises: [].} =
       let buf = self.bufferManager.openFile(path)
       pane.setBuffer(buf),
@@ -67,7 +85,16 @@ proc makePane(self: Application, col: QSplitter): Pane =
       let path = showNewModuleDialog(QWidget(h: self.root.h, owned: false))
       if path.len > 0:
         let buf = self.bufferManager.openFile(path)
-        pane.setBuffer(buf))
+        pane.setBuffer(buf),
+    proc(pane: Pane) {.raises: [].} =
+      showFileFinder(QWidget(h: self.root.h, owned: false),
+        proc(path: string) {.raises: [].} =
+          let buf = self.bufferManager.openFile(path)
+          pane.setBuffer(buf)),
+    proc(pane: Pane) {.raises: [].} =
+      self.openProject())
+  if self.currentProject.len > 0:
+    result.setProjectOpen(true)
 
 proc insertCol(self: Application, afterPane: Pane, col: QSplitter) =
   let colW = QWidget(h: col.h, owned: false)
@@ -88,6 +115,7 @@ proc insertCol(self: Application, afterPane: Pane, col: QSplitter) =
   for i in idx+1..<oldSizes.len:  newSizes[i + 1] = oldSizes[i]
   self.splitter.setSizes(newSizes)
   self.panels.add(p)
+  p.focus()
 
 proc insertRow(self: Application, afterPane: Pane, col: QSplitter) =
   let idx = col.indexOf(afterPane.widget())
@@ -103,6 +131,7 @@ proc insertRow(self: Application, afterPane: Pane, col: QSplitter) =
   for i in idx+1..<oldSizes.len:  newSizes[i + 1] = oldSizes[i]
   col.setSizes(newSizes)
   self.panels.add(p)
+  p.focus()
 
 proc addColumn(self: Application) =
   var col = QSplitter.create(cint 2)    # vertical
@@ -112,6 +141,7 @@ proc addColumn(self: Application) =
   col.addWidget(p.widget())
   self.splitter.addWidget(QWidget(h: col.h, owned: false))
   self.panels.add(p)
+  p.focus()
 
 proc closeBuffer*(self: Application, name: string) =
   for panel in self.panels:
@@ -197,7 +227,7 @@ proc build*(self: Application) =
       self.panels[0].openModuleDialog()
 
   self.toolbar.onTriggered(OpenProject) do():
-    echo "OPEN PROJECT"
+    self.openProject()
 
   self.toolbar.onTriggered(Quit) do():
     QApplication.quit()
