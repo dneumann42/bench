@@ -168,6 +168,7 @@ proc newPane*(
   outerLayout.addWidget(QWidget(h: stack.h, owned: false), cint(0), cint(0))
   var container = QWidget.create()
   container.owned = false
+  container.setAutoFillBackground(true)
   container.setLayout(QLayout(h: outerLayout.h, owned: false))
 
   result.container = container
