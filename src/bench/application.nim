@@ -1,6 +1,6 @@
 import seaqt/[qapplication, qwidget, qfiledialog, qmainwindow, qtoolbar,
               qsplitter, qpushbutton, qvboxlayout]
-import bench/[toolbar, buffers, projects]
+import bench/[toolbar, buffers, projects, projectdialog]
 
 type
   BenchPanel = object
@@ -24,6 +24,7 @@ proc new*(T: typedesc[Application]): T =
     toolbar: Toolbar(),
     projectManager: ProjectManager.init()
   )
+  result.projectManager.load()
 
 proc equalizeSplits*(self: Application) =
   # Equalise all pane widths
@@ -32,6 +33,23 @@ proc equalizeSplits*(self: Application) =
   for i in 0..<n:
     sizes[i] = cint(1)
   self.splitter.setSizes(sizes)
+
+proc onNewPane(root: QMainWindow, splitter: QSplitter) =
+  var btn = QPushButton.create("Open Module")
+  btn.owned = false
+  var layout = QVBoxLayout.create()
+  layout.owned = false
+  layout.addStretch()
+  layout.addWidget(QWidget(h: btn.h, owned: false), cint(0), cint(4))  # AlignHCenter = 4
+  layout.addStretch()
+  var pane = QWidget.create()
+  pane.owned = false
+  pane.setLayout(QLayout(h: layout.h, owned: false))
+  let root = QWidget(h: root.h, owned: false)
+  btn.onClicked do():
+    let fn = QFileDialog.getOpenFileName(root)
+    echo fn
+  splitter.addWidget(QWidget(h: pane.h, owned: false))
 
 proc build*(self: Application) =
   self.root = QMainWindow.create()
@@ -43,6 +61,9 @@ proc build*(self: Application) =
   self.root.setCentralWidget(QWidget(h: self.splitter.h, owned: false))
   self.splitter.owned = false   # Qt (QMainWindow) owns the C++ object now
 
+  self.toolbar.onTriggered(NewProject) do():
+    showNewProjectDialog(QWidget(h: self.root.h, owned: false), self.projectManager)
+
   self.toolbar.onTriggered(OpenFile) do():
     let fn = QFileDialog.getOpenFileName(QWidget(h: self.root.h, owned: false))
     echo fn
@@ -50,26 +71,11 @@ proc build*(self: Application) =
   self.toolbar.onTriggered(Quit) do():
     QApplication.quit()
 
-  proc onNewPane() =
-    var btn = QPushButton.create("Open Module")
-    btn.owned = false
-    var layout = QVBoxLayout.create()
-    layout.owned = false
-    layout.addStretch()
-    layout.addWidget(QWidget(h: btn.h, owned: false), cint(0), cint(4))  # AlignHCenter = 4
-    layout.addStretch()
-    var pane = QWidget.create()
-    pane.owned = false
-    pane.setLayout(QLayout(h: layout.h, owned: false))
-    let root = QWidget(h: self.root.h, owned: false)
-    btn.onClicked do():
-      let fn = QFileDialog.getOpenFileName(root)
-      echo fn
-    self.splitter.addWidget(QWidget(h: pane.h, owned: false))
-    self.equalizeSplits()
+  self.toolbar.onNewPane do():
+    self.root.onNewPane(self.splitter)
 
-  self.toolbar.onNewPane(onNewPane)
-  onNewPane() # initialize at least one
+  self.root.onNewPane(self.splitter) # initialize at least one
+  self.equalizeSplits()
 
 proc show*(self: Application) =
   self.root.show()

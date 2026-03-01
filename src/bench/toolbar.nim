@@ -7,6 +7,7 @@ type
     SaveFile
     OpenFile
     NewProject
+    AddProject
     SaveProject
     OpenProject
     Quit
@@ -47,9 +48,11 @@ proc build*(self: Toolbar) =
   self.fileMenu = ToolMenu(label: "File")
   self.fileMenu.build()
 
-  self.fileMenu.actions[NewFile] = self.fileMenu.menu.addAction("New File")
-  self.fileMenu.actions[OpenFile] = self.fileMenu.menu.addAction("Open File")
-  self.fileMenu.actions[SaveFile] = self.fileMenu.menu.addAction("Save File")
+  self.fileMenu.actions[NewFile] = self.fileMenu.menu.addAction("New Module")
+  self.fileMenu.actions[NewProject] = self.fileMenu.menu.addAction("New Project")
+  self.fileMenu.actions[AddProject] = self.fileMenu.menu.addAction("Add Project")
+  self.fileMenu.actions[OpenFile] = self.fileMenu.menu.addAction("Open Module")
+  self.fileMenu.actions[SaveFile] = self.fileMenu.menu.addAction("Save Module")
   discard self.fileMenu.menu.addSeparator()
   self.fileMenu.actions[Quit] = self.fileMenu.menu.addAction("Quit")
 

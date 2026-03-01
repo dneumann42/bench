@@ -1,5 +1,11 @@
 --noNimblePath
 --path:"/home/dneumann/.nimble/pkgs2/db_connector-0.1.0-4f2e67d0e4b61af9ac5575509305660b473f01a4/src"
 --path:"/home/dneumann/.nimble/pkgs2/seaqt-0.6.4.0-4b05762909502cd88ebb0930db13d1ea4ee49015"
+--path:"/home/dneumann/.nimble/pkgs2/unittest2-0.2.5-02bb3751ba9ddc3c17bfd89f2e41cb6bfb8fc0c9"
 --path:"/home/dneumann/.nimble/pkgs2/db_connector-0.1.0-4f2e67d0e4b61af9ac5575509305660b473f01a4"
+--path:"/home/dneumann/.nimble/pkgs2/toml_serialization-0.2.18-76ae1c2af5dd092849b41750ff29217980dc9ca3"
 --path:"/home/dneumann/Projects/bench/src"
+--path:"/home/dneumann/.nimble/pkgs2/stew-0.4.2-928e82cb8d2f554e8f10feb2349ee9c32fee3a8c"
+--path:"/home/dneumann/.nimble/pkgs2/results-0.5.1-a9c011f74bc9ed5c91103917b9f382b12e82a9e7"
+--path:"/home/dneumann/.nimble/pkgs2/serialization-0.5.2-fa35c1bb76a0a02a2379fe86eaae0957c7527cb8"
+--path:"/home/dneumann/.nimble/pkgs2/faststreams-0.5.0-ee61e507b805ae1df7ec936f03f2d101b0d72383"
