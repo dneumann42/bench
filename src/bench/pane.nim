@@ -1,6 +1,8 @@
 import std/os
 import seaqt/[qwidget, qpushbutton, qvboxlayout, qhboxlayout, qlayout, qlabel,
-              qstackedwidget, qfiledialog, qplaintextedit, qfont]
+              qstackedwidget, qfiledialog, qplaintextedit, qfont,
+              qpixmap, qpaintdevice, qpainter, qcolor, qicon, qsize,
+              qsvgrenderer, qabstractbutton]
 import bench/[buffers, highlight]
 
 type
@@ -13,10 +15,22 @@ type
     editor: QPlainTextEdit
     highlighter: NimHighlighter
     changed*: bool
-    bufferName*: string
+    buffer*: Buffer
 
 const StatusDark = "🌑"
 const StatusLight = "🌕"
+
+const VsplitSvg = staticRead("icons/vsplit.svg")
+const HsplitSvg = staticRead("icons/hsplit.svg")
+
+proc svgIcon(svg: string, size: cint): QIcon =
+  var pm = QPixmap.create(size, size)
+  pm.fill(QColor.create("transparent"))
+  var painter = QPainter.create(QPaintDevice(h: pm.h, owned: false))
+  var renderer = QSvgRenderer.create(svg.toOpenArrayByte(0, svg.high))
+  renderer.render(painter)
+  discard painter.endX()
+  QIcon.create(pm)
 
 proc widget*(pane: Pane): QWidget =
   QWidget(h: pane.container.h, owned: false)
@@ -59,15 +73,19 @@ proc newPane*(
   var statusLabel = QLabel.create(StatusDark)
   statusLabel.owned = false
 
-  var vSplitBtn = QPushButton.create("◨")
+  var vSplitBtn = QPushButton.create("")
   vSplitBtn.owned = false
   vSplitBtn.setFlat(true)
   QWidget(h: vSplitBtn.h, owned: false).setFixedSize(cint 18, cint 18)
+  QAbstractButton(h: vSplitBtn.h, owned: false).setIcon(svgIcon(VsplitSvg, cint 14))
+  QAbstractButton(h: vSplitBtn.h, owned: false).setIconSize(QSize.create(cint 14, cint 14))
 
-  var hSplitBtn = QPushButton.create("⬓")
+  var hSplitBtn = QPushButton.create("")
   hSplitBtn.owned = false
   hSplitBtn.setFlat(true)
   QWidget(h: hSplitBtn.h, owned: false).setFixedSize(cint 18, cint 18)
+  QAbstractButton(h: hSplitBtn.h, owned: false).setIcon(svgIcon(HsplitSvg, cint 14))
+  QAbstractButton(h: hSplitBtn.h, owned: false).setIconSize(QSize.create(cint 14, cint 14))
 
   var closeBtn = QPushButton.create("×")
   closeBtn.owned = false
@@ -124,9 +142,9 @@ proc newPane*(
       onFileSelected(pane, fn)
 
   saveBtn.onClicked do() {.raises: [].}:
-    if pane.bufferName.len > 0:
+    if pane.buffer != nil and pane.buffer.path.len > 0:
       try:
-        writeFile(pane.bufferName, QPlainTextEdit(h: pane.editor.h, owned: false).toPlainText())
+        writeFile(pane.buffer.path, QPlainTextEdit(h: pane.editor.h, owned: false).toPlainText())
         pane.changed = false
         pane.statusLabel.setText(StatusDark)
       except:
@@ -145,7 +163,7 @@ proc setBuffer*(pane: Pane, buf: Buffer) =
   pane.changed = false
   pane.statusLabel.setText(StatusDark)
   pane.stack.setCurrentIndex(cint(1))
-  pane.bufferName = buf.name
+  pane.buffer = buf
 
 proc clearBuffer*(pane: Pane) =
   pane.label.setText("")
@@ -153,4 +171,4 @@ proc clearBuffer*(pane: Pane) =
   pane.changed = false
   pane.statusLabel.setText(StatusDark)
   pane.stack.setCurrentIndex(cint(0))
-  pane.bufferName = ""
+  pane.buffer = nil

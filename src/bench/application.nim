@@ -102,7 +102,7 @@ proc addColumn(self: Application) =
 
 proc closeBuffer*(self: Application, name: string) =
   for panel in self.panels:
-    if panel.bufferName == name:
+    if panel.buffer != nil and panel.buffer.name == name:
       panel.clearBuffer()
   self.bufferManager.close(name)
 
