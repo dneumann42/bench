@@ -45,21 +45,24 @@ proc newPane*(
   discard stack.addWidget(QWidget(h: openModuleWidget.h, owned: false))
   discard stack.addWidget(QWidget(h: editor.h, owned: false))
 
-  # Header bar: [label] [stretch] [⊟] [⊞] [×]
   var label = QLabel.create("")
   label.owned = false
-  var vSplitBtn = QPushButton.create("⊟")
+
+  var vSplitBtn = QPushButton.create("◨")
   vSplitBtn.owned = false
   vSplitBtn.setFlat(true)
   QWidget(h: vSplitBtn.h, owned: false).setFixedSize(cint 18, cint 18)
-  var hSplitBtn = QPushButton.create("⊞")
+
+  var hSplitBtn = QPushButton.create("⬓")
   hSplitBtn.owned = false
   hSplitBtn.setFlat(true)
   QWidget(h: hSplitBtn.h, owned: false).setFixedSize(cint 18, cint 18)
+
   var closeBtn = QPushButton.create("×")
   closeBtn.owned = false
   closeBtn.setFlat(true)
   QWidget(h: closeBtn.h, owned: false).setFixedSize(cint 18, cint 18)
+
   var headerLayout = QHBoxLayout.create()
   headerLayout.owned = false
   QLayout(h: headerLayout.h, owned: false).setContentsMargins(cint 4, cint 2, cint 4, cint 2)
@@ -68,6 +71,7 @@ proc newPane*(
   headerLayout.addWidget(QWidget(h: vSplitBtn.h, owned: false), cint(0), cint(0))
   headerLayout.addWidget(QWidget(h: hSplitBtn.h, owned: false), cint(0), cint(0))
   headerLayout.addWidget(QWidget(h: closeBtn.h, owned: false), cint(0), cint(0))
+
   var headerBar = QWidget.create()
   headerBar.owned = false
   headerBar.setLayout(QLayout(h: headerLayout.h, owned: false))
@@ -91,15 +95,14 @@ proc newPane*(
   result.highlighter = hl
 
   let pane = result
-  btn.onClicked(proc() {.raises: [].} =
+  btn.onClicked do() {.raises: [].}:
     let fn = QFileDialog.getOpenFileName(QWidget(h: pane.stack.h, owned: false))
     if fn.len > 0:
-      onFileSelected(pane, fn))
+      onFileSelected(pane, fn)
 
-  vSplitBtn.onClicked(proc() {.raises: [].} = onVSplit(pane))
-  hSplitBtn.onClicked(proc() {.raises: [].} = onHSplit(pane))
-  closeBtn.onClicked(proc() {.raises: [].} =
-    onClose(pane))
+  vSplitBtn.onClicked do() {.raises: [].}: onVSplit(pane)
+  hSplitBtn.onClicked do() {.raises: [].}: onHSplit(pane)
+  closeBtn.onClicked do() {.raises: [].}: onClose(pane)
 
 proc setBuffer*(pane: Pane, buf: Buffer) =
   var displayName = buf.name
