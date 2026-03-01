@@ -1,5 +1,5 @@
-import seaqt/[qapplication, qwidget, qfiledialog, qmainwindow, qtoolbar,
-              qsplitter, qcoreapplication]
+import seaqt/[qapplication, qwidget, qfiledialog, qmainwindow, qtoolbar, qsplitter,
+              qcoreapplication, qstatusbar, qtoolbutton, qabstractbutton]
 import bench/[toolbar, buffers, projects, projectdialog, moduledialog, theme, pane, runner]
 
 type
@@ -11,6 +11,10 @@ type
     splitter: QSplitter
     panels: seq[Pane]
     theme: Theme
+    runStatusBtnH:  pointer
+    buildStatusBtnH: pointer
+    runReopen:  proc() {.raises: [].}
+    buildReopen: proc() {.raises: [].}
 
 proc buffers*(app: Application): lent BufferManager =
   result = app.bufferManager
@@ -118,19 +122,56 @@ proc build*(self: Application) =
 
   self.root.addToolBar(QToolBar(h: self.toolbar.widget().h, owned: false))
 
-  self.splitter = QSplitter.create(cint(1))          # 1 = Horizontal
+  self.splitter = QSplitter.create(cint(1))
   self.splitter.setHandleWidth(cint 1)
   self.root.setCentralWidget(QWidget(h: self.splitter.h, owned: false))
-  self.splitter.owned = false   # Qt (QMainWindow) owns the C++ object now
+  self.splitter.owned = false
 
   self.theme = Dark
   applyTheme(Dark)
 
+  # Status-bar background-process indicator buttons (initially hidden)
+  var runStatusBtn = QToolButton.create()
+  runStatusBtn.owned = false
+  QAbstractButton(h: runStatusBtn.h, owned: false).setText("nimble run")
+  QWidget(h: runStatusBtn.h, owned: false).hide()
+  self.runStatusBtnH = runStatusBtn.h
+
+  var buildStatusBtn = QToolButton.create()
+  buildStatusBtn.owned = false
+  QAbstractButton(h: buildStatusBtn.h, owned: false).setText("nimble build")
+  QWidget(h: buildStatusBtn.h, owned: false).hide()
+  self.buildStatusBtnH = buildStatusBtn.h
+
+  let sb = self.root.statusBar()
+  sb.addPermanentWidget(QWidget(h: runStatusBtn.h, owned: false))
+  sb.addPermanentWidget(QWidget(h: buildStatusBtn.h, owned: false))
+
+  let runBtnH = self.runStatusBtnH
+  runStatusBtn.onClicked do() {.raises: [].}:
+    QWidget(h: runBtnH, owned: false).hide()
+    if self.runReopen != nil:
+      self.runReopen()
+      self.runReopen = nil
+
+  let buildBtnH = self.buildStatusBtnH
+  buildStatusBtn.onClicked do() {.raises: [].}:
+    QWidget(h: buildBtnH, owned: false).hide()
+    if self.buildReopen != nil:
+      self.buildReopen()
+      self.buildReopen = nil
+
   self.toolbar.onRun do():
-    runCommand(QWidget(h: self.root.h, owned: false), "nimble run", "nimble run")
+    let onBg = proc(reopen: proc() {.raises: [].}) {.raises: [].} =
+      self.runReopen = reopen
+      QWidget(h: self.runStatusBtnH, owned: false).show()
+    runCommand(QWidget(h: self.root.h, owned: false), "nimble run", "nimble run", onBg)
 
   self.toolbar.onBuild do():
-    runCommand(QWidget(h: self.root.h, owned: false), "nimble build", "nimble build")
+    let onBg = proc(reopen: proc() {.raises: [].}) {.raises: [].} =
+      self.buildReopen = reopen
+      QWidget(h: self.buildStatusBtnH, owned: false).show()
+    runCommand(QWidget(h: self.root.h, owned: false), "nimble build", "nimble build", onBg)
 
   self.toolbar.onThemeToggle do():
     self.theme = if self.theme == Dark: Light else: Dark
