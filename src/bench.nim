@@ -1,4 +1,4 @@
-import seaqt/[qapplication, qvboxlayout, qboxlayout, qlayout, qwidget, qfiledialog]
+import seaqt/[qapplication]
 
 import bench/[application, toolbar, buffers]
 

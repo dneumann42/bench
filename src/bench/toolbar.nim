@@ -20,6 +20,7 @@ type
   Toolbar* = ref object
     toolbar: QToolbar
     fileMenu: ToolMenu
+    newPaneBtn: QToolButton
 
 proc build(self: ToolMenu) =
   self.button = QToolButton.create()
@@ -53,3 +54,10 @@ proc build*(self: Toolbar) =
   self.fileMenu.actions[Quit] = self.fileMenu.menu.addAction("Quit")
 
   discard self.toolbar.addWidget(self.fileMenu.button)
+
+  self.newPaneBtn = QToolButton.create()
+  self.newPaneBtn.setText("New Pane")
+  discard self.toolbar.addWidget(self.newPaneBtn)
+
+proc onNewPane*(self: Toolbar, triggered: proc() {.raises: [].}) =
+  self.newPaneBtn.onClicked(triggered)
