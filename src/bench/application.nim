@@ -1,6 +1,6 @@
 import seaqt/[qapplication, qwidget, qfiledialog, qmainwindow, qtoolbar,
               qsplitter]
-import bench/[toolbar, buffers, projects, projectdialog, theme, pane]
+import bench/[toolbar, buffers, projects, projectdialog, moduledialog, theme, pane]
 
 type
   Application* = ref object
@@ -128,6 +128,13 @@ proc build*(self: Application) =
 
   self.toolbar.onTriggered(NewProject) do():
     showNewProjectDialog(QWidget(h: self.root.h, owned: false), self.projectManager)
+
+  self.toolbar.onTriggered(NewFile) do():
+    if self.panels.len > 0:
+      let path = showNewModuleDialog(QWidget(h: self.root.h, owned: false))
+      if path.len > 0:
+        let buf = self.bufferManager.openFile(path)
+        self.panels[0].setBuffer(buf)
 
   self.toolbar.onTriggered(OpenFile) do():
     if self.panels.len > 0:

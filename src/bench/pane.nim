@@ -2,7 +2,7 @@ import std/os
 import seaqt/[qwidget, qpushbutton, qvboxlayout, qhboxlayout, qlayout, qlabel,
               qstackedwidget, qfiledialog, qplaintextedit, qfont,
               qpixmap, qpaintdevice, qpainter, qcolor, qicon, qsize,
-              qsvgrenderer, qabstractbutton]
+              qsvgrenderer, qabstractbutton, qshortcut, qkeysequence]
 import bench/[buffers, highlight]
 
 type
@@ -17,11 +17,12 @@ type
     changed*: bool
     buffer*: Buffer
 
-const StatusDark = "🌑"
-const StatusLight = "🌕"
+const StatusDark = ""
+const StatusLight = "★"
 
 const VsplitSvg = staticRead("icons/vsplit.svg")
 const HsplitSvg = staticRead("icons/hsplit.svg")
+const SaveSvg = staticRead("icons/save.svg")
 
 proc svgIcon(svg: string, size: cint): QIcon =
   var pm = QPixmap.create(size, size)
@@ -73,29 +74,33 @@ proc newPane*(
   var statusLabel = QLabel.create(StatusDark)
   statusLabel.owned = false
 
+  const IconSize = 10
+
   var vSplitBtn = QPushButton.create("")
   vSplitBtn.owned = false
   vSplitBtn.setFlat(true)
   QWidget(h: vSplitBtn.h, owned: false).setFixedSize(cint 18, cint 18)
-  QAbstractButton(h: vSplitBtn.h, owned: false).setIcon(svgIcon(VsplitSvg, cint 14))
-  QAbstractButton(h: vSplitBtn.h, owned: false).setIconSize(QSize.create(cint 14, cint 14))
+  QAbstractButton(h: vSplitBtn.h, owned: false).setIcon(svgIcon(VsplitSvg, cint IconSize))
+  QAbstractButton(h: vSplitBtn.h, owned: false).setIconSize(QSize.create(cint IconSize, cint IconSize))
 
   var hSplitBtn = QPushButton.create("")
   hSplitBtn.owned = false
   hSplitBtn.setFlat(true)
   QWidget(h: hSplitBtn.h, owned: false).setFixedSize(cint 18, cint 18)
-  QAbstractButton(h: hSplitBtn.h, owned: false).setIcon(svgIcon(HsplitSvg, cint 14))
-  QAbstractButton(h: hSplitBtn.h, owned: false).setIconSize(QSize.create(cint 14, cint 14))
+  QAbstractButton(h: hSplitBtn.h, owned: false).setIcon(svgIcon(HsplitSvg, cint IconSize))
+  QAbstractButton(h: hSplitBtn.h, owned: false).setIconSize(QSize.create(cint IconSize, cint IconSize))
 
   var closeBtn = QPushButton.create("×")
   closeBtn.owned = false
   closeBtn.setFlat(true)
   QWidget(h: closeBtn.h, owned: false).setFixedSize(cint 18, cint 18)
 
-  var saveBtn = QPushButton.create("💾")
+  var saveBtn = QPushButton.create("")
   saveBtn.owned = false
   saveBtn.setFlat(true)
   QWidget(h: saveBtn.h, owned: false).setFixedSize(cint 18, cint 18)
+  QAbstractButton(h: saveBtn.h, owned: false).setIcon(svgIcon(SaveSvg, cint IconSize))
+  QAbstractButton(h: saveBtn.h, owned: false).setIconSize(QSize.create(cint IconSize, cint IconSize))
 
   var headerLayout = QHBoxLayout.create()
   headerLayout.owned = false
@@ -141,7 +146,7 @@ proc newPane*(
     if fn.len > 0:
       onFileSelected(pane, fn)
 
-  saveBtn.onClicked do() {.raises: [].}:
+  proc doSave(pane: Pane) {.raises: [].} =
     if pane.buffer != nil and pane.buffer.path.len > 0:
       try:
         writeFile(pane.buffer.path, QPlainTextEdit(h: pane.editor.h, owned: false).toPlainText())
@@ -149,6 +154,15 @@ proc newPane*(
         pane.statusLabel.setText(StatusDark)
       except:
         discard
+
+  saveBtn.onClicked do() {.raises: [].}: doSave(pane)
+
+  var saveShortcut = QShortcut.create(
+    cint(QKeySequenceStandardKeyEnum.Save),
+    QObject(h: pane.container.h, owned: false))
+  saveShortcut.owned = false
+  saveShortcut.setContext(cint 1)  # WidgetWithChildrenShortcut
+  saveShortcut.onActivated do() {.raises: [].}: doSave(pane)
 
   vSplitBtn.onClicked do() {.raises: [].}: onVSplit(pane)
   hSplitBtn.onClicked do() {.raises: [].}: onHSplit(pane)

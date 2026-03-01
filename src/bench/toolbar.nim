@@ -62,10 +62,6 @@ proc build*(self: Toolbar) =
 
   discard self.toolbar.addWidget(self.fileMenu.button)
 
-  self.newPaneBtn = QToolButton.create()
-  self.newPaneBtn.setText("New Pane")
-  discard self.toolbar.addWidget(self.newPaneBtn)
-
   var spacer = QWidget.create()
   spacer.owned = false
   spacer.setSizePolicy(cint(7), cint(5))  # Expanding x Preferred
