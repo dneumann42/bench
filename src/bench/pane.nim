@@ -18,7 +18,9 @@ proc widget*(pane: Pane): QWidget =
 
 proc newPane*(
   onFileSelected: proc(pane: Pane, path: string) {.raises: [].},
-  onClose: proc(pane: Pane) {.raises: [].}
+  onClose: proc(pane: Pane) {.raises: [].},
+  onVSplit: proc(pane: Pane) {.raises: [].},
+  onHSplit: proc(pane: Pane) {.raises: [].}
 ): Pane =
   result = Pane()
 
@@ -43,9 +45,17 @@ proc newPane*(
   discard stack.addWidget(QWidget(h: openModuleWidget.h, owned: false))
   discard stack.addWidget(QWidget(h: editor.h, owned: false))
 
-  # Header bar: [label] [stretch] [× button]
+  # Header bar: [label] [stretch] [⊟] [⊞] [×]
   var label = QLabel.create("")
   label.owned = false
+  var vSplitBtn = QPushButton.create("⊟")
+  vSplitBtn.owned = false
+  vSplitBtn.setFlat(true)
+  QWidget(h: vSplitBtn.h, owned: false).setFixedSize(cint 18, cint 18)
+  var hSplitBtn = QPushButton.create("⊞")
+  hSplitBtn.owned = false
+  hSplitBtn.setFlat(true)
+  QWidget(h: hSplitBtn.h, owned: false).setFixedSize(cint 18, cint 18)
   var closeBtn = QPushButton.create("×")
   closeBtn.owned = false
   closeBtn.setFlat(true)
@@ -55,6 +65,8 @@ proc newPane*(
   QLayout(h: headerLayout.h, owned: false).setContentsMargins(cint 4, cint 2, cint 4, cint 2)
   headerLayout.addWidget(QWidget(h: label.h, owned: false), cint(0), cint(0))
   headerLayout.addStretch()
+  headerLayout.addWidget(QWidget(h: vSplitBtn.h, owned: false), cint(0), cint(0))
+  headerLayout.addWidget(QWidget(h: hSplitBtn.h, owned: false), cint(0), cint(0))
   headerLayout.addWidget(QWidget(h: closeBtn.h, owned: false), cint(0), cint(0))
   var headerBar = QWidget.create()
   headerBar.owned = false
@@ -84,6 +96,8 @@ proc newPane*(
     if fn.len > 0:
       onFileSelected(pane, fn))
 
+  vSplitBtn.onClicked(proc() {.raises: [].} = onVSplit(pane))
+  hSplitBtn.onClicked(proc() {.raises: [].} = onHSplit(pane))
   closeBtn.onClicked(proc() {.raises: [].} =
     onClose(pane))
 

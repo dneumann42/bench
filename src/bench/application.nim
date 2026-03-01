@@ -24,16 +24,20 @@ proc new*(T: typedesc[Application]): T =
   result.projectManager.load()
 
 proc equalizeSplits*(self: Application) =
-  # Equalise all pane widths
+  # Equalise all column widths
   let n = self.splitter.count().int
   var sizes = newSeq[cint](n)
   for i in 0..<n:
     sizes[i] = cint(1)
   self.splitter.setSizes(sizes)
 
-proc addPane(self: Application) =
-  var p: Pane
-  p = newPane(
+# Forward declarations
+proc insertCol(self: Application, afterPane: Pane, col: QSplitter)
+proc insertRow(self: Application, afterPane: Pane, col: QSplitter)
+
+proc makePane(self: Application, col: QSplitter): Pane =
+  let colH = col.h  # capture raw pointer — avoids QSplitter copy restriction
+  newPane(
     proc(pane: Pane, path: string) {.raises: [].} =
       let buf = self.bufferManager.openFile(path)
       pane.setBuffer(buf),
@@ -44,9 +48,56 @@ proc addPane(self: Application) =
           if self.panels[i] == pane:
             self.panels.delete(i)
             break
-      except:
-        discard)
-  self.splitter.addWidget(p.widget())
+      except: discard,
+    proc(pane: Pane) {.raises: [].} =
+      try: self.insertCol(pane, QSplitter(h: colH, owned: false))
+      except: discard,
+    proc(pane: Pane) {.raises: [].} =
+      try: self.insertRow(pane, QSplitter(h: colH, owned: false))
+      except: discard)
+
+proc insertCol(self: Application, afterPane: Pane, col: QSplitter) =
+  let colW = QWidget(h: col.h, owned: false)
+  let idx = self.splitter.indexOf(colW)
+  if idx < 0: return
+  let oldSizes = self.splitter.sizes()
+  let srcW = oldSizes[idx]
+  var newCol = QSplitter.create(cint 2)   # vertical
+  newCol.setHandleWidth(cint 1)
+  newCol.owned = false
+  let p = self.makePane(newCol)
+  newCol.addWidget(p.widget())
+  self.splitter.insertWidget(cint(idx + 1), QWidget(h: newCol.h, owned: false))
+  var newSizes = newSeq[cint](oldSizes.len + 1)
+  for i in 0..<idx:               newSizes[i]     = oldSizes[i]
+  newSizes[idx]                   = cint(srcW div 2)
+  newSizes[idx + 1]               = cint(srcW - srcW div 2)
+  for i in idx+1..<oldSizes.len:  newSizes[i + 1] = oldSizes[i]
+  self.splitter.setSizes(newSizes)
+  self.panels.add(p)
+
+proc insertRow(self: Application, afterPane: Pane, col: QSplitter) =
+  let idx = col.indexOf(afterPane.widget())
+  if idx < 0: return
+  let oldSizes = col.sizes()
+  let srcH = oldSizes[idx]
+  let p = self.makePane(col)
+  col.insertWidget(cint(idx + 1), p.widget())
+  var newSizes = newSeq[cint](oldSizes.len + 1)
+  for i in 0..<idx:               newSizes[i]     = oldSizes[i]
+  newSizes[idx]                   = cint(srcH div 2)
+  newSizes[idx + 1]               = cint(srcH - srcH div 2)
+  for i in idx+1..<oldSizes.len:  newSizes[i + 1] = oldSizes[i]
+  col.setSizes(newSizes)
+  self.panels.add(p)
+
+proc addColumn(self: Application) =
+  var col = QSplitter.create(cint 2)    # vertical
+  col.setHandleWidth(cint 1)
+  col.owned = false
+  let p = self.makePane(col)
+  col.addWidget(p.widget())
+  self.splitter.addWidget(QWidget(h: col.h, owned: false))
   self.panels.add(p)
 
 proc closeBuffer*(self: Application, name: string) =
@@ -89,10 +140,10 @@ proc build*(self: Application) =
     QApplication.quit()
 
   self.toolbar.onNewPane do():
-    self.addPane()
+    self.addColumn()
     self.equalizeSplits()
 
-  self.addPane()  # initialize at least one
+  self.addColumn()  # initialize at least one
   self.equalizeSplits()
 
 proc show*(self: Application) =
