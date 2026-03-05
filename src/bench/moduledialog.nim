@@ -27,7 +27,7 @@ proc showNewModuleDialog*(parent: QWidget): string =
   pathEditRowLayout.addWidget(QWidget(h: browseBtn.h, owned: false))
   let dialogRef = QWidget(h: dialog.h, owned: false)
   browseBtn.onClicked do():
-    let dir = QFileDialog.getExistingDirectory(dialogRef)x
+    let dir = QFileDialog.getExistingDirectory(dialogRef)
     if dir.len > 0:
       pathEdit.setText(dir)
 

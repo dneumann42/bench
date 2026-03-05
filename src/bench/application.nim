@@ -214,7 +214,17 @@ proc build*(self: Application) =
       btn.move(rw.width() - cint(110), rw.height() - cint(40))
       btn.show()
       btn.raiseX()
-    runCommand(QWidget(h: self.root.h, owned: false), "nimble run", "n=$(ls *.nimble | head -1); b=${n%.nimble}; nim cpp --out:./$b src/$b.nim && ./$b", onBg)
+    let gotoRun = proc(file: string, line, col: int) {.raises: [].} =
+      try:
+        var target = self.lastFocusedPane
+        if target == nil and self.panels.len > 0:
+          target = self.panels[0]
+        if target == nil: return
+        let buf = self.bufferManager.openFile(file)
+        target.setBuffer(buf)
+        target.jumpToLine(line, col)
+      except: discard
+    runCommand(QWidget(h: self.root.h, owned: false), "nimble run", "n=$(ls *.nimble | head -1); b=${n%.nimble}; nim cpp --out:./$b src/$b.nim && ./$b", onBg, gotoRun)
 
   self.toolbar.onBuild do():
     let onBg = proc(reopen: proc() {.raises: [].}) {.raises: [].} =
@@ -224,7 +234,17 @@ proc build*(self: Application) =
       btn.move(rw.width() - cint(110), rw.height() - cint(80))
       btn.show()
       btn.raiseX()
-    runCommand(QWidget(h: self.root.h, owned: false), "nimble build", "n=$(ls *.nimble | head -1); b=${n%.nimble}; nim cpp --out:./$b src/$b.nim", onBg)
+    let gotoBuild = proc(file: string, line, col: int) {.raises: [].} =
+      try:
+        var target = self.lastFocusedPane
+        if target == nil and self.panels.len > 0:
+          target = self.panels[0]
+        if target == nil: return
+        let buf = self.bufferManager.openFile(file)
+        target.setBuffer(buf)
+        target.jumpToLine(line, col)
+      except: discard
+    runCommand(QWidget(h: self.root.h, owned: false), "nimble build", "n=$(ls *.nimble | head -1); b=${n%.nimble}; nim cpp --out:./$b src/$b.nim", onBg, gotoBuild)
 
   self.toolbar.onThemeToggle do():
     self.theme = if self.theme == Dark: Light else: Dark

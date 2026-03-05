@@ -460,12 +460,14 @@ proc focus*(pane: Pane) {.raises: [].} =
   else:
     pane.container.setFocus()
 
-proc jumpToLine*(pane: Pane, lineNum: int) {.raises: [].} =
+proc jumpToLine*(pane: Pane, lineNum: int, col: int = 0) {.raises: [].} =
   if pane.buffer == nil: return
   let ed  = QPlainTextEdit(h: pane.editor.h, owned: false)
   let doc = ed.document()
   let blk = doc.findBlockByNumber(cint(lineNum - 1))
   var cur = ed.textCursor()
   cur.setPosition(blk.position())
+  if col > 0:
+    discard cur.movePosition(cint 19, cint 0, cint(col - 1))  # Right, MoveAnchor, col-1 times
   ed.setTextCursor(cur)
   ed.ensureCursorVisible()
