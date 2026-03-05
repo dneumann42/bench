@@ -30,7 +30,10 @@
       "Bash(nix-build <nixpkgs>:*)",
       "Bash(/nix/store/9b8jzn6nczzsxqfmr52sa2z280q11pi5-nim_lk-20250309/bin/nim_lk:*)",
       "Bash(/nix/store/ry71c22x9vi649f1vlgsgn2ijzdrk6rx-nim_builder-2.2.4/bin/nim_builder:*)",
-      "Bash(nix flake:*)"
+      "Bash(nix flake:*)",
+      "Bash(python3:*)",
+      "Bash(echo:*)",
+      "Bash(printenv:*)"
     ]
   }
 }

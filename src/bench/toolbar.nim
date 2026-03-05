@@ -8,6 +8,7 @@ const MoonSvg    = staticRead("icons/moon.svg")
 const RunSvg     = staticRead("icons/run.svg")
 const BuildSvg   = staticRead("icons/build.svg")
 const OpacitySvg = staticRead("icons/opacity.svg")
+const GearSvg    = staticRead("icons/gear.svg")
 
 proc svgIcon(svg: string, size: cint): QIcon =
   var pm = QPixmap.create(size, size)
@@ -43,6 +44,7 @@ type
     opacityBtn: QToolButton
     runBtn: QToolButton
     buildBtn: QToolButton
+    settingsBtn: QToolButton
 
 proc build(self: ToolMenu) =
   self.button = QToolButton.create()
@@ -130,6 +132,13 @@ proc build*(self: Toolbar) =
   QAbstractButton(h: self.opacityBtn.h, owned: false).setIconSize(QSize.create(cint IconSize, cint IconSize))
   discard self.toolbar.addWidget(self.opacityBtn)
 
+  self.settingsBtn = QToolButton.create()
+  self.settingsBtn.setAutoRaise(true)
+  QWidget(h: self.settingsBtn.h, owned: false).setFixedSize(cint 18, cint 18)
+  QAbstractButton(h: self.settingsBtn.h, owned: false).setIcon(svgIcon(GearSvg, cint IconSize))
+  QAbstractButton(h: self.settingsBtn.h, owned: false).setIconSize(QSize.create(cint IconSize, cint IconSize))
+  discard self.toolbar.addWidget(self.settingsBtn)
+
 proc setProjectName*(self: Toolbar, name: string) =
   self.projectLabel.setText(name)
 
@@ -138,6 +147,9 @@ proc onRun*(self: Toolbar, triggered: proc() {.raises: [].}) =
 
 proc onBuild*(self: Toolbar, triggered: proc() {.raises: [].}) =
   self.buildBtn.onClicked(triggered)
+
+proc onSettings*(self: Toolbar, triggered: proc() {.raises: [].}) =
+  self.settingsBtn.onCLicked(triggered)
 
 proc onNewPane*(self: Toolbar, triggered: proc() {.raises: [].}) =
   self.newPaneBtn.onClicked(triggered)

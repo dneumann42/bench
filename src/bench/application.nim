@@ -4,7 +4,7 @@ import seaqt/[qapplication, qwidget, qfiledialog, qmainwindow, qtoolbar, qsplitt
               qshortcut, qkeysequence, qobject, qgraphicsopacityeffect,
               qgraphicseffect]
 import bench/[toolbar, buffers, projects, projectdialog, moduledialog, theme, pane, runner,
-              filefinder, rgfinder]
+              filefinder, rgfinder, settings]
 
 type
   Application* = ref object
@@ -214,7 +214,7 @@ proc build*(self: Application) =
       btn.move(rw.width() - cint(110), rw.height() - cint(40))
       btn.show()
       btn.raiseX()
-    runCommand(QWidget(h: self.root.h, owned: false), "nimble run", "nimble run", onBg)
+    runCommand(QWidget(h: self.root.h, owned: false), "nimble run", "n=$(ls *.nimble | head -1); b=${n%.nimble}; nim cpp --out:./$b src/$b.nim && ./$b", onBg)
 
   self.toolbar.onBuild do():
     let onBg = proc(reopen: proc() {.raises: [].}) {.raises: [].} =
@@ -224,7 +224,7 @@ proc build*(self: Application) =
       btn.move(rw.width() - cint(110), rw.height() - cint(80))
       btn.show()
       btn.raiseX()
-    runCommand(QWidget(h: self.root.h, owned: false), "nimble build", "nimble build", onBg)
+    runCommand(QWidget(h: self.root.h, owned: false), "nimble build", "n=$(ls *.nimble | head -1); b=${n%.nimble}; nim cpp --out:./$b src/$b.nim", onBg)
 
   self.toolbar.onThemeToggle do():
     self.theme = if self.theme == Dark: Light else: Dark
@@ -271,6 +271,9 @@ proc build*(self: Application) =
   self.toolbar.onNewPane do():
     self.addColumn()
     self.equalizeSplits()
+
+  self.toolbar.onSettings do():
+    showSettingsDialog(QWidget(h: self.root.h, owned: false))
 
   var finderSc = QShortcut.create(QKeySequence.create("Ctrl+P"),
                                   QObject(h: self.root.h, owned: false))

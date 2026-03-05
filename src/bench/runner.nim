@@ -101,6 +101,6 @@ proc runCommand*(parent: QWidget, title, command: string,
           QWidget(h: dialogH, owned: false).show()
         onBackground(reopenProc)
 
-    process.startCommand(command)
+    process.start("bash", @["-c", command])
     QWidget(h: dialogH, owned: false).show()
   except: discard

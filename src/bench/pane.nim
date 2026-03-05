@@ -392,7 +392,7 @@ proc setHeaderFocus*(pane: Pane, focused: bool, isDark: bool) =
     QGradient(h: grad.h, owned: false).setCoordinateMode(cint QGradientCoordinateModeEnum.ObjectMode)
     if isDark:
       QGradient(h: grad.h, owned: false).setColorAt(0.0, QColor.create("#1e3a5c"))
-      QGradient(h: grad.h, owned: false).setColorAt(1.0, QColor.create("#353535"))
+      QGradient(h: grad.h, owned: false).setColorAt(1.0, QColor.create("#000000"))
     else:
       QGradient(h: grad.h, owned: false).setColorAt(0.0, QColor.create("#b8d4f0"))
       QGradient(h: grad.h, owned: false).setColorAt(1.0, QColor.create("#e8e8e8"))
@@ -402,7 +402,19 @@ proc setHeaderFocus*(pane: Pane, focused: bool, isDark: bool) =
     hbw.setPalette(pal)
     hbw.setAutoFillBackground(true)
   else:
-    hbw.setAutoFillBackground(false)
+    var grad = QLinearGradient.create(0.0, 0.0, 0.0, 1.0)
+    QGradient(h: grad.h, owned: false).setCoordinateMode(cint QGradientCoordinateModeEnum.ObjectMode)
+    if isDark:
+      QGradient(h: grad.h, owned: false).setColorAt(0.0, QColor.create("#0b1623"))
+      QGradient(h: grad.h, owned: false).setColorAt(1.0, QColor.create("#000000"))
+    else:
+      QGradient(h: grad.h, owned: false).setColorAt(0.0, QColor.create("#596b7c"))
+      QGradient(h: grad.h, owned: false).setColorAt(1.0, QColor.create("#e8e8e8"))
+    var brush = QBrush.create(QGradient(h: grad.h, owned: false))
+    var pal = QPalette.create()
+    pal.setBrush(cint QPaletteColorRoleEnum.Window, brush)
+    hbw.setPalette(pal)
+    hbw.setAutoFillBackground(true)
 
 proc setBuffer*(pane: Pane, buf: Buffer) =
   var displayName = buf.name
