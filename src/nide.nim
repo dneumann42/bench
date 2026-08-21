@@ -1,15 +1,14 @@
-import nide/application/[application, buildwiring]
-import nide/helpers/debuglog
-import seaqt/qapplication
+## Nide — a simple nest counter for now: two buttons and a label bound to the
+## model's count.
 
-proc start() =
-  setupLogging()
-  let _ = QApplication.create()
-  var application = Application.new()
-  QApplication.setApplicationName("Nide DEV 0.0.1")
-  application.build()
-  application.show()
-  quit QApplication.exec().int
+import nest
+
+type
+  Nide = object
+
+widget nideApplication(model: Nide):
+  ui.label(ui.id(), "Hello, World!")
 
 when isMainModule:
-  start()
+  runApp(AppConfig.init(width = 360, height = 180, title = "Nide Counter"),
+         Nide(), nideApplication)

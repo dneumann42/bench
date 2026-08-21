@@ -12,3 +12,4 @@ nimbledeps
 .claude/
 .codex
 *.log
+build/

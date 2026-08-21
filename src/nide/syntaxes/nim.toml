@@ -1,3 +1,0 @@
-id = "nim"
-engine = "nimLexer"
-extensions = [".nim", ".nims", ".nimble", ".nimcfg"]
