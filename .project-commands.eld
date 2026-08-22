@@ -1,2 +1,3 @@
 ;;; -*- lisp-data -*-
-((run . "nim r src/nide") (commands "nim r src/nide"))
+((build . "nimble run") (run . "nimble run")
+ (commands "nim r src/nide" "nimble run"))

@@ -11,4 +11,3 @@ bin           = @["nide"]
 # Dependencies
 
 requires "nim >= 2.2.10"
-requires "nest"

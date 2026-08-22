@@ -1,0 +1,62 @@
+use nide:
+  include request-action set-split-orientation set-status version
+
+fun file-new:
+  request-action "new-file"
+
+fun file-open:
+  request-action "open-file-dialog"
+
+fun nide-get key:
+  dict-get nide-state key
+
+fun get-buffers:
+  nide-get "buffers"
+
+fun get-active-buffer-path:
+  nide-get "active-buffer-path"
+
+fun get-active-buffer-text:
+  nide-get "active-buffer-text"
+
+fun buffer-open:
+  define:
+    buffers = get-buffers
+
+  set-status (to-string buffers)
+
+fun file-save:
+  define:
+    path = get-active-buffer-path
+    content = get-active-buffer-text
+  if (= path ""):
+    request-action "save-file-as-dialog"
+  else:
+    with (open-file path "wb") stream:
+      write stream content
+    request-action "mark-buffer-saved"
+    set-status (string "Saved " path)
+
+fun file-save-as:
+  request-action "save-file-as-dialog"
+
+fun pane-split-column:
+  set-split-orientation "column"
+
+fun pane-split-row:
+  set-split-orientation "row"
+
+fun pane-unsplit:
+  request-action "unsplit-pane"
+
+fun project-open:
+  set-status "Open project is not implemented"
+
+fun project-run:
+  set-status "Run project is not implemented"
+
+fun project-build:
+  set-status "Build project is not implemented"
+
+fun project-settings:
+  set-status "Project settings are not implemented"
