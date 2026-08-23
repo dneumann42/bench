@@ -1,6 +1,6 @@
 # Low-level native bindings and environment helpers for Nide's Owl command layer.
 
-import std/[sets, tables]
+import std/[sets, tables, sugar]
 import owl
 
 const
@@ -13,16 +13,12 @@ const
   VarState* = "nide-state"
   VarRequestedActions* = "nide-requested-actions"
   VarSplitOrientation* = "nide-split-orientation"
-
   VarStatus* = "nide-status"
 
 proc textList*(items: openArray[string]): Value =
-  var values: seq[Value]
-  for item in items:
-    values.add text(item)
-  list(values)
+  list(collect(for item in items: text(item)))
 
-proc bindValue*(env: Environment, name: string, value: Value) =
+proc bindvalue*(env: Environment, name: string, value: Value) =
   env.define(name, value)
 
 proc bindText*(env: Environment, name, value: string) =

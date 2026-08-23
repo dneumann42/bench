@@ -4,6 +4,7 @@ import nest
 
 type
   BufferID* = string
+  
   Buffer* = object
     id*: BufferID
     path*: string

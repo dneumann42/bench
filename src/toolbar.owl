@@ -1,0 +1,25 @@
+use nide/toolbar:
+  include toolbars toolbar menu item tool
+
+toolbars:
+  toolbar "main" "top":
+    menu "file" "File":
+      item "file.newFile" "New File" "file-new"
+      item "file.openFile" "Open File" "file-open"
+      item "file.openBuffer" "Open Buffer" "buffer-open"
+      item "file.saveBuffer" "Save Buffer" "file-save"
+      item "file.saveBufferAs" "Save Buffer As" "file-save-as"
+
+    menu "project" "Project":
+      item "project.open" "Open Project" "project-open"
+      item "project.run" "Run" "project-run"
+      item "project.build" "Build" "project-build"
+      item "project.settings" "Project Settings" "project-settings"
+
+    tool "build" "Build" "project-build"
+    tool "run" "Run" "project-run"
+
+  toolbar "pane-tools" "left":
+    tool "splitColumn" "=" "pane-split-column"
+    tool "splitRow" "%" "pane-split-row"
+    tool "unsplit" "x" "pane-unsplit"

@@ -8,6 +8,7 @@ import buffers, commands, panes
 import widgets/toolbar
 
 const NideCommandsSource = staticRead"commands.owl"
+const NideToolbarSource = staticRead"toolbar.owl"
 const
   MinPaneWidth = 180.0
   MinPaneHeight = 140.0
@@ -23,7 +24,7 @@ type
 
   Nide = object
     evaluator: Evaluator
-    toolbar: Toolbar
+    toolbars: Toolbars
     buffers: BufferManager
     panes: PaneManager
     requestedActions: HashSet[string]
@@ -47,7 +48,8 @@ proc saveFileCallback(
 ) {.cdecl.} =
   discard filter
   let request = cast[SaveDialogRequest](userdata)
-  if not filelist.isNil and not filelist[0].isNil and not request.callback.isNil:
+  if not filelist.isNil and not filelist[0].isNil and
+      not request.callback.isNil:
     request.callback($filelist[0])
   removePending(request)
 
@@ -65,7 +67,7 @@ proc pickSaveFile(callback: proc(path: string)) =
   )
 
 proc initNide(): Nide =
-  result = Nide(evaluator: Evaluator.init(), toolbar: initToolbar(),
+  result = Nide(evaluator: Evaluator.init(), toolbars: initToolbars(),
       buffers: BufferManager.init(),
       requestedActions: initHashSet[string](),
       status: "Ready")
@@ -276,40 +278,31 @@ proc layoutPane(ui: var UI, model: var Nide, paneID: PaneID) =
       for child in pane.children:
         ui.layoutPane(model, child)
 
-proc buildToolbar(toolbar: var Toolbar) =
-  toolbar.addMenu("file", "File", [
-    toolbarMenuItem("file.newFile", "New File", "file-new"),
-    toolbarMenuItem("file.openFile", "Open File", "file-open"),
-    toolbarMenuItem("file.openBuffer", "Open Buffer", "buffer-open"),
-    toolbarMenuItem("file.saveBuffer", "Save Buffer", "file-save"),
-    toolbarMenuItem("file.saveBufferAs", "Save Buffer As", "file-save-as"),
-  ])
-  toolbar.addMenu("project", "Project", [
-    toolbarMenuItem("project.open", "Open Project", "project-open"),
-    toolbarMenuItem("project.run", "Run", "project-run"),
-    toolbarMenuItem("project.build", "Build", "project-build"),
-    toolbarMenuItem("project.settings", "Project Settings", "project-settings"),
-  ])
-  toolbar.addTool("splitColumn", "=", "pane-split-column")
-  toolbar.addTool("splitRow", "%", "pane-split-row")
-  toolbar.addTool("unsplit", "x", "pane-unsplit")
-  toolbar.addTool("build", "Build", "project-build")
-  toolbar.addTool("run", "Run", "project-run")
-
 widget nideApplication(model: var Nide):
   model.processPendingFileAction()
 
   ui.column(ui.id("root"), cfg(width = fill(), height = fill(), gap = 0)):
-    for event in ui.toolbar(model.toolbar):
+    for event in ui.toolbarDock(model.toolbars, TopDock):
       model.handleToolbarEvent(event)
 
-    ui.panel(ui.id("workspace"), cfg(width = fill(), height = fill(), padding = 6,
-        gap = 4)):
-      ui.row(ui.id("workspaceRoot"), cfg(width = fill(min = MinPaneWidth),
-          height = fill(min = MinPaneHeight), gap = 0,
-          alignSelf = AlignStretch)):
-        ui.layoutPane(model, model.panes.rootPane)
-      
+    ui.row(ui.id("workspaceDockRow"), cfg(width = fill(), height = fill(),
+        gap = 0, alignSelf = AlignStretch)):
+      for event in ui.toolbarDock(model.toolbars, LeftDock):
+        model.handleToolbarEvent(event)
+
+      ui.panel(ui.id("workspace"), cfg(width = fill(), height = fill(),
+          padding = 6, gap = 4)):
+        ui.row(ui.id("workspaceRoot"), cfg(width = fill(min = MinPaneWidth),
+            height = fill(min = MinPaneHeight), gap = 0,
+            alignSelf = AlignStretch)):
+          ui.layoutPane(model, model.panes.rootPane)
+
+      for event in ui.toolbarDock(model.toolbars, RightDock):
+        model.handleToolbarEvent(event)
+
+    for event in ui.toolbarDock(model.toolbars, BottomDock):
+      model.handleToolbarEvent(event)
+
     ui.row(ui.id("footer"), cfg(width = fill(), height = fit(), gap = 8)):
       ui.label(ui.id("status"), model.status)
 
@@ -317,14 +310,16 @@ when isMainModule:
   let config = AppConfig.init(width = 900, height = 640, title = "Nide")
   var nide = initNide()
   nide.evaluator.registerInternalCommands()
+  nide.evaluator.registerToolbarBuilderCommands()
 
   try:
     nide.runNideSource(NideCommandsSource, currentSourcePath().parentDir /
         "commands.owl")
+    nide.runNideSource(NideToolbarSource, currentSourcePath().parentDir /
+        "toolbar.owl")
+    nide.toolbars = nide.evaluator.env.readToolbars("nide-toolbars")
   except OwlError as error:
     stderr.write report(error, useColor = true)
     quit 1
-
-  nide.toolbar.buildToolbar()
 
   runApp(config, nide, nideApplication)
