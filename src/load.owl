@@ -1,0 +1,61 @@
+use nide/toolbar:
+  include set-toolbars toolbar-value menu-value item-value tool-value spacer-value statusbar
+
+use nide:
+  include get-status
+
+block-command toolbars:
+  set-toolbars (list-from (statements block))
+
+block-command toolbar id dock:
+  toolbar-value (eval id) (eval dock) (list-from (statements block))
+
+block-command toolbar-menu id label:
+  menu-value (eval id) (eval label) (list-from (statements block))
+
+fun toolbar-item id label command:
+  item-value id label command
+
+fun toolbar-tool id label command:
+  tool-value id label command
+
+fun toolbar-spacer:
+  spacer-value
+
+fun file-menu:
+  toolbar-menu "file" "File":
+    toolbar-item "file.newFile" "New File" "file-new"
+    toolbar-item "file.openFile" "Open File" "file-open"
+    toolbar-item "file.openBuffer" "Open Buffer" "buffer-open"
+    toolbar-item "file.saveBuffer" "Save Buffer" "file-save"
+    toolbar-item "file.saveBufferAs" "Save Buffer As" "file-save-as"
+
+fun project-menu:
+  toolbar-menu "project" "Project":
+    toolbar-item "project.open" "Open Project" "project-open"
+    toolbar-item "project.run" "Run" "project-run"
+    toolbar-item "project.build" "Build" "project-build"
+    toolbar-item "project.settings" "Project Settings" "project-settings"
+
+toolbars:
+  toolbar "main" "top":
+    file-menu
+    project-menu
+    toolbar-spacer
+    toolbar-tool "build" "Build" "project-build"
+    toolbar-tool "run" "Run" "project-run"
+
+  toolbar "pane-tools" "left":
+    toolbar-tool "splitColumn" "=" "pane-split-column"
+    toolbar-tool "splitRow" "%" "pane-split-row"
+    toolbar-tool "unsplit" "x" "pane-unsplit"
+
+statusbar:
+  label (id "statusbar" "status") (get-status):
+    width = fill
+    height = fit
+
+  spacer
+
+  button (id "statusbar" "hello-world") "Hello, World!":
+    nothing

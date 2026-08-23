@@ -1,6 +1,7 @@
 import std/tables
 
 import nest, owl
+import nest/owldsl
 
 # Toolbars can be docked around an editor surface. Top and bottom docks stack
 # horizontal toolbars. Left and right docks line up vertical toolbars.
@@ -50,25 +51,6 @@ type
   Toolbars* = object
     bars*: seq[Toolbar]
 
-  StatusbarControlKind* = enum
-    StatusbarLabelControl
-    StatusbarButtonControl
-    StatusbarSpacerControl
-
-  StatusbarControl* = object
-    case kind*: StatusbarControlKind
-    of StatusbarLabelControl:
-      labelText*: string
-    of StatusbarButtonControl:
-      buttonID*: string
-      buttonLabel*: string
-      buttonCommandID*: string
-    of StatusbarSpacerControl:
-      statusbarSpacerID*: string
-
-  Statusbar* = object
-    controls*: seq[StatusbarControl]
-
   ToolbarEvent* {.variant.} = object
     toolbarID*: string
     commandID*: string
@@ -80,10 +62,6 @@ type
       itemID*: string
     of ToolClicked:
       toolID*: string
-
-  StatusbarEvent* = object
-    controlID*: string
-    commandID*: string
 
 proc toolbarMenuItem*(id, label: string, commandID = ""): ToolbarMenuItem =
   ToolbarMenuItem(id: id, label: label,
@@ -127,9 +105,6 @@ proc initToolbar*(id = "", dock = TopDock): Toolbar =
 
 proc initToolbars*(): Toolbars =
   Toolbars(bars: @[])
-
-proc initStatusbar*(): Statusbar =
-  Statusbar(controls: @[])
 
 proc addToolbar*(toolbars: var Toolbars, id: string, dock: ToolbarDock) =
   toolbars.bars.add initToolbar(id, dock)
@@ -198,6 +173,13 @@ proc evalTextArgument(
   if value.kind != Text:
     raise newException(EvaluatorError, commandID & " expects text arguments")
   value.text
+
+proc evalListArgument(
+    env: Environment, arguments: seq[SyntaxNode], index: int, commandID: string
+): Value {.raises: [EvaluatorError].} =
+  result = env.eval(arguments[index])
+  if result.kind != List:
+    raise newException(EvaluatorError, commandID & " expects a list")
 
 proc textField(value: Value, field, owner: string): string {.raises: [
     EvaluatorError].} =
@@ -294,110 +276,67 @@ proc readToolbars*(env: Environment, name: string): Toolbars {.raises: [
   for toolbarValue in value.items:
     result.bars.add readToolbar(toolbarValue)
 
-proc statusbarLabel(value: string): StatusbarControl =
-  StatusbarControl(kind: StatusbarLabelControl, labelText: value)
-
-proc statusbarButton(id, label: string, commandID = ""): StatusbarControl =
-  StatusbarControl(kind: StatusbarButtonControl, buttonID: id,
-      buttonLabel: label, buttonCommandID: if commandID.len >
-      0: commandID else: id)
-
-proc statusbarSpacer(id = ""): StatusbarControl =
-  StatusbarControl(kind: StatusbarSpacerControl, statusbarSpacerID: id)
-
-proc readStatusbarControl(value: Value): StatusbarControl {.raises: [
-    EvaluatorError].} =
-  let kind = value.textField("kind", "statusbar control")
-  case kind
-  of "label":
-    statusbarLabel(value.textField("text", "statusbar label"))
-  of "button":
-    statusbarButton(
-      value.textField("id", "statusbar button"),
-      value.textField("label", "statusbar button"),
-      value.textField("command", "statusbar button"),
-    )
-  of "spacer":
-    statusbarSpacer(value.textField("id", "statusbar spacer"))
-  else:
-    raise newException(EvaluatorError, "unknown statusbar control: " & kind)
-
-proc readStatusbar*(env: Environment, name: string): Statusbar {.raises: [
-    EvaluatorError].} =
-  let value = env.get(name)
-  if value.kind != List:
-    raise newException(EvaluatorError, name & " must be a list")
-  result = initStatusbar()
-  for controlValue in value.items:
-    result.controls.add readStatusbarControl(controlValue)
-
 proc registerToolbarBuilderCommands*(evaluator: var Evaluator) =
   var module = nativeModule"nide/toolbar"
 
-  module.native "toolbars":
-    discard layout
-    expectArgumentCount("toolbars", arguments.len, [0])
-    result = evalBodyList(env, bodyNodes)
-    env.set("nide-toolbars", result)
-
-  module.native "toolbar":
-    discard layout
-    expectArgumentCount("toolbar", arguments.len, [2])
-    toolbarValue("toolbar", [
-      ("id", text(env.evalTextArgument(arguments, 0, "toolbar"))),
-      ("dock", text(env.evalTextArgument(arguments, 1, "toolbar"))),
-      ("children", evalBodyList(env, bodyNodes)),
-    ])
-
-  module.native "menu":
-    discard layout
-    expectArgumentCount("menu", arguments.len, [2])
-    toolbarValue("menu", [
-      ("id", text(env.evalTextArgument(arguments, 0, "menu"))),
-      ("label", text(env.evalTextArgument(arguments, 1, "menu"))),
-      ("items", evalBodyList(env, bodyNodes)),
-    ])
-
-  module.native "item":
+  module.native "set-toolbars":
     discard layout
     discard bodyNodes
-    expectArgumentCount("item", arguments.len, [2, 3])
-    let id = env.evalTextArgument(arguments, 0, "item")
+    expectArgumentCount("set-toolbars", arguments.len, [1])
+    result = env.evalListArgument(arguments, 0, "set-toolbars")
+    let targetEnv = if env.parent.isNil: env else: env.parent
+    targetEnv.set("nide-toolbars", result)
+
+  module.native "toolbar-value":
+    discard layout
+    discard bodyNodes
+    expectArgumentCount("toolbar-value", arguments.len, [3])
+    toolbarValue("toolbar", [
+      ("id", text(env.evalTextArgument(arguments, 0, "toolbar-value"))),
+      ("dock", text(env.evalTextArgument(arguments, 1, "toolbar-value"))),
+      ("children", env.evalListArgument(arguments, 2, "toolbar-value")),
+    ])
+
+  module.native "menu-value":
+    discard layout
+    discard bodyNodes
+    expectArgumentCount("menu-value", arguments.len, [3])
+    toolbarValue("menu", [
+      ("id", text(env.evalTextArgument(arguments, 0, "menu-value"))),
+      ("label", text(env.evalTextArgument(arguments, 1, "menu-value"))),
+      ("items", env.evalListArgument(arguments, 2, "menu-value")),
+    ])
+
+  module.native "item-value":
+    discard layout
+    discard bodyNodes
+    expectArgumentCount("item-value", arguments.len, [3])
+    let id = env.evalTextArgument(arguments, 0, "item-value")
     toolbarValue("item", [
       ("id", text(id)),
-      ("label", text(env.evalTextArgument(arguments, 1, "item"))),
-      ("command", text(
-        if arguments.len == 3:
-          env.evalTextArgument(arguments, 2, "item")
-        else:
-          id
-      )),
+      ("label", text(env.evalTextArgument(arguments, 1, "item-value"))),
+      ("command", text(env.evalTextArgument(arguments, 2, "item-value"))),
     ])
 
-  module.native "tool":
+  module.native "tool-value":
     discard layout
     discard bodyNodes
-    expectArgumentCount("tool", arguments.len, [2, 3])
-    let id = env.evalTextArgument(arguments, 0, "tool")
+    expectArgumentCount("tool-value", arguments.len, [3])
+    let id = env.evalTextArgument(arguments, 0, "tool-value")
     toolbarValue("tool", [
       ("id", text(id)),
-      ("label", text(env.evalTextArgument(arguments, 1, "tool"))),
-      ("command", text(
-        if arguments.len == 3:
-          env.evalTextArgument(arguments, 2, "tool")
-        else:
-          id
-      )),
+      ("label", text(env.evalTextArgument(arguments, 1, "tool-value"))),
+      ("command", text(env.evalTextArgument(arguments, 2, "tool-value"))),
     ])
 
-  module.native "spacer":
+  module.native "spacer-value":
     discard layout
     discard bodyNodes
-    expectArgumentCount("spacer", arguments.len, [0, 1])
+    expectArgumentCount("spacer-value", arguments.len, [0, 1])
     toolbarValue("spacer", [
       ("id", text(
         if arguments.len == 1:
-          env.evalTextArgument(arguments, 0, "spacer")
+          env.evalTextArgument(arguments, 0, "spacer-value")
         else:
           ""
       )),
@@ -406,35 +345,9 @@ proc registerToolbarBuilderCommands*(evaluator: var Evaluator) =
   module.native "statusbar":
     discard layout
     expectArgumentCount("statusbar", arguments.len, [0])
-    result = evalBodyList(env, bodyNodes)
-    env.set("nide-statusbar", result)
-
-  module.native "label":
-    discard layout
-    discard bodyNodes
-    expectArgumentCount("label", arguments.len, [1])
-    let value = env.eval(arguments[0])
-    if value.kind != Text:
-      raise newException(EvaluatorError, "label expects text")
-    toolbarValue("label", [
-      ("text", value),
-    ])
-
-  module.native "button":
-    discard layout
-    discard bodyNodes
-    expectArgumentCount("button", arguments.len, [2, 3])
-    let id = env.evalTextArgument(arguments, 0, "button")
-    toolbarValue("button", [
-      ("id", text(id)),
-      ("label", text(env.evalTextArgument(arguments, 1, "button"))),
-      ("command", text(
-        if arguments.len == 3:
-          env.evalTextArgument(arguments, 2, "button")
-        else:
-          id
-      )),
-    ])
+    env.define("nide-statusbar", closureCommand(@[], bodyNodes, env,
+        evaluatesArguments = false, acceptsBlock = false))
+    nothing()
 
   evaluator.registerModule(module)
 
@@ -527,31 +440,7 @@ widget toolbarDock*(model: var Toolbars, dock: ToolbarDock)emits ToolbarEvent:
           for event in ui.toolbar(model.bars[index]):
             emit event
 
-widget statusbar*(model: var Statusbar)emits StatusbarEvent:
-  var spacerIndex = model.controls.len
-  for index, control in model.controls:
-    if control.kind == StatusbarSpacerControl:
-      spacerIndex = index
-      break
-
-  template renderControl(index: int) =
-    let control = model.controls[index]
-    case control.kind
-    of StatusbarLabelControl:
-      ui.label(ui.id("statusbarLabel", index), control.labelText)
-    of StatusbarButtonControl:
-      if ui.button(ui.id("statusbarButton", control.buttonID),
-          control.buttonLabel):
-        emit StatusbarEvent(controlID: control.buttonID,
-            commandID: control.buttonCommandID)
-    of StatusbarSpacerControl:
-      discard
-
+widget statusbar*(runtime: NestOwlRuntime):
   ui.row(ui.id("statusbar"), cfg(width = fill(), height = fit(), gap = 8,
       alignItems = AlignCenter)):
-    for index in 0 ..< spacerIndex:
-      renderControl(index)
-    if spacerIndex < model.controls.len:
-      ui.spacer(ui.id("statusbarSpacer"), width = fill(), height = fixed(1))
-      for index in (spacerIndex + 1) ..< model.controls.len:
-        renderControl(index)
+    runtime.renderWidget(ui, "", "nide-statusbar")

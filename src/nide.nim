@@ -2,13 +2,14 @@ import std/[algorithm, os, sets, tables]
 
 import nest, owl
 import nest/dialogs
+import nest/owldsl
 import sdl3
 
 import buffers, commands, panes
 import widgets/toolbar
 
 const NideCommandsSource = staticRead"commands.owl"
-const NideToolbarSource = staticRead"toolbar.owl"
+const NideLoadSource = staticRead"load.owl"
 const
   MinPaneWidth = 180.0
   MinPaneHeight = 140.0
@@ -24,8 +25,8 @@ type
 
   Nide = object
     evaluator: Evaluator
+    uiRuntime: NestOwlRuntime
     toolbars: Toolbars
-    statusbar: Statusbar
     buffers: BufferManager
     panes: PaneManager
     requestedActions: HashSet[string]
@@ -34,7 +35,6 @@ type
     pendingFileAction: PendingFileAction
     pendingPath: string
     status: string
-    statusbarStatus: string
 
 var pendingSaveDialogs: seq[SaveDialogRequest]
 var pickedFileAction: PendingFileAction
@@ -69,8 +69,8 @@ proc pickSaveFile(callback: proc(path: string)) =
   )
 
 proc initNide(): Nide =
-  result = Nide(evaluator: Evaluator.init(), toolbars: initToolbars(),
-      statusbar: initStatusbar(),
+  result = Nide(evaluator: Evaluator.init(), uiRuntime: NestOwlRuntime.init(),
+      toolbars: initToolbars(),
       buffers: BufferManager.init(),
       requestedActions: initHashSet[string](),
       status: "Ready")
@@ -218,22 +218,6 @@ proc handleToolbarEvent(model: var Nide, event: ToolbarEvent) =
   of MenuItemClicked, ToolClicked:
     model.runCommand(event.commandID)
 
-proc handleStatusbarEvent(model: var Nide, event: StatusbarEvent) =
-  model.runCommand(event.commandID)
-
-proc refreshStatusbar(model: var Nide) =
-  if model.statusbarStatus == model.status:
-    return
-  model.evaluator.env.bindText(VarStatus, model.status)
-  try:
-    discard model.evaluator.exec(parse(NideToolbarSource,
-        currentSourcePath().parentDir / "toolbar.owl"))
-    model.statusbar = model.evaluator.env.readStatusbar("nide-statusbar")
-    model.statusbarStatus = model.status
-  except OwlError as error:
-    model.statusbarStatus = model.status
-    model.status = "Statusbar failed: " & error.msg
-
 proc processPendingFileAction(model: var Nide) =
   if pickedFileAction != NoFileAction:
     model.pendingFileAction = pickedFileAction
@@ -299,7 +283,7 @@ proc layoutPane(ui: var UI, model: var Nide, paneID: PaneID) =
 
 widget nideApplication(model: var Nide):
   model.processPendingFileAction()
-  model.refreshStatusbar()
+  model.uiRuntime.evaluator.env.bindText(VarStatus, model.status)
 
   ui.column(ui.id("root"), cfg(width = fill(), height = fill(), gap = 0)):
     for event in ui.toolbarDock(model.toolbars, TopDock):
@@ -323,23 +307,22 @@ widget nideApplication(model: var Nide):
     for event in ui.toolbarDock(model.toolbars, BottomDock):
       model.handleToolbarEvent(event)
 
-    for event in ui.statusbar(model.statusbar):
-      model.handleStatusbarEvent(event)
+    ui.statusbar(model.uiRuntime)
 
 when isMainModule:
   let config = AppConfig.init(width = 900, height = 640, title = "Nide")
   var nide = initNide()
   nide.evaluator.registerInternalCommands()
-  nide.evaluator.registerToolbarBuilderCommands()
+  nide.uiRuntime.evaluator.registerInternalCommands()
+  nide.uiRuntime.evaluator.registerToolbarBuilderCommands()
 
   try:
     nide.runNideSource(NideCommandsSource, currentSourcePath().parentDir /
         "commands.owl")
-    nide.runNideSource(NideToolbarSource, currentSourcePath().parentDir /
-        "toolbar.owl")
-    nide.toolbars = nide.evaluator.env.readToolbars("nide-toolbars")
-    nide.statusbar = nide.evaluator.env.readStatusbar("nide-statusbar")
-    nide.statusbarStatus = nide.status
+    nide.uiRuntime.evaluator.env.bindText(VarStatus, nide.status)
+    discard nide.uiRuntime.evaluator.exec(parse(NideLoadSource,
+        currentSourcePath().parentDir / "load.owl"))
+    nide.toolbars = nide.uiRuntime.evaluator.env.readToolbars("nide-toolbars")
   except OwlError as error:
     stderr.write report(error, useColor = true)
     quit 1
