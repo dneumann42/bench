@@ -1,0 +1,29 @@
+use nide:
+  include rgb set-editor-syntax set-mode-hook syntax regex word span starts-with clear-editor-syntax
+
+define:
+  owlKeywordColor = rgb 178 139 222
+  owlFormColor = rgb 110 219 188
+  owlStringColor = rgb 226 196 92
+  owlNumberColor = rgb 225 158 104
+  owlCommentColor = rgb 142 153 158
+  owlOperatorColor = rgb 222 116 139
+  owlConstantColor = rgb 104 184 222
+
+fun owl-enable-highlighting:
+  define:
+    owlRules = []:
+      starts-with ";" owlCommentColor
+      span "\"" "\"" owlStringColor
+      regex "\\b[0-9]+(\\.[0-9]+)?\\b" owlNumberColor
+      regex "\\b(use|include|define|fun|block-command|record|if|cond|when|else|with|set|append|return)\\b" owlKeywordColor
+      regex "\\b(true|false|nothing)\\b" owlConstantColor
+      regex "\\b[A-Za-z_][A-Za-z0-9_-]*\\s*:" owlFormColor
+      regex "[=+\\-*/<>!?.,|&^%@~]+" owlOperatorColor
+  set-editor-syntax (syntax "owl" owlRules)
+
+fun owl-disable-highlighting:
+  clear-editor-syntax
+
+set-mode-hook "onload" "owl-enable-highlighting"
+set-mode-hook "onunload" "owl-disable-highlighting"

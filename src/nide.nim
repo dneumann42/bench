@@ -1,4 +1,4 @@
-import std/[algorithm, os, osproc, streams, strutils, tables]
+import std/[algorithm, os, osproc, sets, streams, strutils, tables]
 
 import nest, owl
 import nest/dialogs
@@ -6,7 +6,7 @@ import nest/errorDialogs
 import nest/owldsl
 import sdl3
 
-import buffers, commands, panes, projects
+import buffers, commands, modes, panes, projects
 import widgets/[panels, toolbar]
 
 const NideCommandsSource = staticRead"commands.owl"
@@ -42,6 +42,10 @@ type
     requestHandlers: Table[string, NideRequestHandler]
     toolbars: Toolbars
     projectManager: ProjectManager
+    modeRegistry: ModeRegistry
+    loadedModes: HashSet[string]
+    modeHooks: Table[string, Table[string, string]]
+    loadingMode: string
     buffers: BufferManager
     panes: PaneManager
     lastFocusedEditorPane: PaneID
@@ -91,6 +95,9 @@ proc init(T: typedesc[Nide]): T =
       requestHandlers: initTable[string, NideRequestHandler](),
       toolbars: Toolbars.init(),
       projectManager: ProjectManager.init(),
+      modeRegistry: ModeRegistry.init(),
+      loadedModes: initHashSet[string](),
+      modeHooks: initTable[string, Table[string, string]](),
       buffers: BufferManager.init(),
       status: "Ready")
   result.uiRuntime = uiRuntime
@@ -120,6 +127,7 @@ proc nideConfigPath(): string =
 proc ensureNideUserFiles(model: var Nide) =
   let dir = nideConfigDir()
   createDir(dir)
+  createDir(nideModesDir())
 
   let projectsPath = nideProjectsPath()
   if not fileExists(projectsPath):
@@ -183,8 +191,12 @@ proc requestSaveFile(model: var Nide) =
     pickedPath = path
   )
 
+proc runBufferHook(model: var Nide, id: BufferID, hook: string)
+proc applyFileMode(model: var Nide, id: BufferID)
+
 proc newFile(model: var Nide) =
   let id = model.activeBufferID()
+  model.runBufferHook(id, "onunload")
   model.buffers.replaceWithScratch(id)
   model.status = "New file"
 
@@ -194,7 +206,9 @@ proc openFile(model: var Nide, path: string) =
     model.status = "Open failed: no focused editor pane"
     return
   try:
+    model.runBufferHook(id, "onunload")
     model.buffers.replaceWithFile(id, path)
+    model.applyFileMode(id)
     model.status = "Opened " & path
   except CatchableError as error:
     model.status = "Open failed: " & error.msg
@@ -202,7 +216,9 @@ proc openFile(model: var Nide, path: string) =
 proc saveFileAs(model: var Nide, path: string) =
   let id = model.activeBufferID()
   try:
+    model.runBufferHook(id, "onunload")
     model.buffers.saveBufferAs(id, path)
+    model.applyFileMode(id)
     model.status = "Saved " & path
   except CatchableError as error:
     model.status = "Save failed: " & error.msg
@@ -228,6 +244,7 @@ proc unsplitPane(model: var Nide) =
     model.status = "Cannot unsplit the last pane"
     return
   if model.buffers.hasBuffer(bufferID):
+    model.runBufferHook(bufferID, "onunload")
     model.buffers.buffers.del(bufferID)
   model.status = "Unsplit pane"
 
@@ -278,6 +295,38 @@ proc runCommand(model: var Nide, commandID: string) =
     model.runNideSource(commandID & "\n", commandID)
   except OwlError as error:
     model.status = "Command failed: " & error.msg
+
+proc runBufferHook(model: var Nide, id: BufferID, hook: string) =
+  if not model.buffers.hasBuffer(id):
+    return
+  let mode = string(model.buffers.buffers[id].fileMode)
+  var commandID = ""
+  if mode in model.modeHooks:
+    commandID = model.modeHooks[mode].getOrDefault(hook)
+  if commandID.len == 0:
+    commandID = model.buffers.buffers[id].modeHooks.getOrDefault(hook)
+  if commandID.len > 0:
+    model.runCommand(commandID)
+
+proc applyFileMode(model: var Nide, id: BufferID) =
+  if not model.buffers.hasBuffer(id):
+    return
+  let buffer = model.buffers.buffers[id]
+  let mode = model.modeRegistry.detectMode(buffer.path, buffer.editor.text)
+  model.buffers.buffers[id].fileMode = buffers.FileMode(mode)
+  if mode.len == 0:
+    return
+  let script = mode.modeSource()
+  try:
+    if script.source.len > 0 and mode notin model.loadedModes:
+      model.loadingMode = mode
+      model.runNideSource(script.source, script.path)
+      model.loadingMode = ""
+      model.loadedModes.incl mode
+    model.runBufferHook(id, "onload")
+  except OwlError as error:
+    model.loadingMode = ""
+    model.status = "Mode " & mode & " failed: " & error.msg
 
 proc togglePanel(model: var Nide, target: string): bool =
   for panel in model.panels.mitems:
@@ -332,6 +381,13 @@ proc panelsValue(model: Nide): Value =
     values.add dictionary(entries)
   list(values)
 
+proc activeBufferMode(model: Nide): string =
+  let id = model.activeBufferID()
+  if model.buffers.hasBuffer(id):
+    string(model.buffers.buffers[id].fileMode)
+  else:
+    ""
+
 proc publishBridgeData(model: var Nide) =
   model.bridge.putData("project-manager", model.projectManager.snapshot())
   model.bridge.putData("projects", model.projectManager.projectsValue())
@@ -343,6 +399,7 @@ proc publishBridgeData(model: var Nide) =
       model.projectManager.activeProjectPath()))
   model.bridge.putData("home-directory", text(getHomeDir()))
   model.bridge.putData("panels", model.panelsValue())
+  model.bridge.putData("active-buffer-mode", text(model.activeBufferMode()))
   model.bridge.putData("auto-track-opened-projects",
       boolean(NideAutoTrackOpenedProjects))
 
@@ -511,6 +568,96 @@ proc fileExplorerEventRequest(model: var Nide, request: NideBridgeRequest) =
   else:
     model.status = "File explorer " & action
 
+proc valueText(value: Value, key: string): string =
+  if value.kind == Dictionary and key in value.entries and
+      value.entries[key].kind == Text:
+    value.entries[key].text
+  else:
+    ""
+
+proc valueNumber(value: Value, key: string, fallback: float64): float64 =
+  if value.kind == Dictionary and key in value.entries and
+      value.entries[key].kind == Number:
+    value.entries[key].number
+  else:
+    fallback
+
+proc clampByte(value: float64): uint8 =
+  uint8(value.int.clamp(0, 255))
+
+proc syntaxColor(value: Value): nest.Color =
+  if value.kind == Dictionary:
+    nest.color(
+      value.valueNumber("r", 241).clampByte(),
+      value.valueNumber("g", 246).clampByte(),
+      value.valueNumber("b", 247).clampByte(),
+      value.valueNumber("a", 255).clampByte(),
+    )
+  else:
+    nest.color(241, 246, 247)
+
+proc syntaxRule(value: Value): SyntaxRule =
+  if value.kind != Dictionary:
+    return
+  let kind = value.valueText("kind")
+  result.kind =
+    case kind
+    of "regex":
+      SyntaxRegex
+    of "word":
+      SyntaxWord
+    of "starts-with":
+      SyntaxStartsWith
+    of "contains":
+      SyntaxContains
+    of "span":
+      SyntaxSpan
+    else:
+      SyntaxRegex
+  result.pattern = value.valueText("pattern")
+  result.stopPattern = value.valueText("stop")
+  if "color" in value.entries:
+    result.color = value.entries["color"].syntaxColor()
+  else:
+    result.color = nest.color(241, 246, 247)
+
+proc syntaxDefinition(value: Value): SyntaxDefinition =
+  if value.kind != Dictionary:
+    return
+  result.name = value.valueText("name")
+  if "rules" in value.entries and value.entries["rules"].kind == List:
+    for item in value.entries["rules"].items:
+      let rule = item.syntaxRule()
+      if rule.pattern.len > 0:
+        result.rules.add rule
+
+proc setEditorSyntaxRequest(model: var Nide, request: NideBridgeRequest) =
+  let id = model.activeBufferID()
+  if not model.buffers.hasBuffer(id) or request.arguments.len != 1:
+    return
+  model.buffers.buffers[id].editor.setSyntax(
+    request.arguments[0].syntaxDefinition())
+
+proc clearEditorSyntaxRequest(model: var Nide, request: NideBridgeRequest) =
+  discard request
+  let id = model.activeBufferID()
+  if model.buffers.hasBuffer(id):
+    model.buffers.buffers[id].editor.clearSyntax()
+
+proc setModeHookRequest(model: var Nide, request: NideBridgeRequest) =
+  let hook = request.requestText(0).strip.toLowerAscii()
+  let commandID = request.requestText(1).strip
+  if hook.len == 0 or commandID.len == 0:
+    return
+  if model.loadingMode.len > 0:
+    if model.loadingMode notin model.modeHooks:
+      model.modeHooks[model.loadingMode] = initTable[string, string]()
+    model.modeHooks[model.loadingMode][hook] = commandID
+  else:
+    let id = model.activeBufferID()
+    if model.buffers.hasBuffer(id):
+      model.buffers.buffers[id].modeHooks[hook] = commandID
+
 proc processBridgeRequests(model: var Nide) =
   for request in model.bridge.drainRequests():
     let handler = model.requestHandlers.getOrDefault(request.name)
@@ -570,6 +717,9 @@ proc configureBridge(model: var Nide) =
   model.registerRequest("projects.reload", reloadProjectsRequest)
   model.registerRequest("projects.save", saveProjectsRequest)
   model.registerRequest("status.set", setStatusRequest)
+  model.registerRequest("buffer.set-syntax", setEditorSyntaxRequest)
+  model.registerRequest("buffer.clear-syntax", clearEditorSyntaxRequest)
+  model.registerRequest("buffer.set-mode-hook", setModeHookRequest)
   model.publishBridgeData()
 
 proc processPendingFileAction(model: var Nide) =
@@ -658,7 +808,8 @@ proc layoutPane(ui: var UI, model: var Nide, paneID: PaneID) =
             bufferTitle(model.buffers.buffers[pane.bufferID]), width = fill())
       ui.textEditor(editorID, model.buffers.buffers[pane.bufferID].editor,
           width = fill(min = MinPaneWidth), height = fill(min = MinPaneHeight),
-          fontName = "editor", lineNumbers = true, scrollbars = true)
+          fontName = "editor", lineNumbers = true, scrollbars = true,
+          syntax = model.buffers.buffers[pane.bufferID].editor.syntax.name)
 
     if ui.clicked(panelID) or ui.focused(editorID):
       model.panes.focus(paneID)
@@ -755,6 +906,7 @@ proc start =
 
   try:
     nide.ensureNideUserFiles()
+    nide.modeRegistry = loadModeRegistry()
     nide.loadProjectManager()
     nide.runNideSource(NideCommandsSource, currentSourcePath().parentDir /
         "commands.owl")

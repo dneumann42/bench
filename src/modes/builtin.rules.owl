@@ -1,0 +1,37 @@
+use nide/modes:
+  include extension filename mimetype shebang
+
+extension "nim" "nim"
+extension "nim" "nims"
+extension "nim" "nimble"
+mimetype "nim" "text/x-nim"
+
+extension "owl" "owl"
+mimetype "owl" "text/x-owl"
+
+extension "c" "c"
+extension "c" "h"
+extension "c" "cc"
+extension "c" "hh"
+extension "c" "cpp"
+extension "c" "cxx"
+extension "c" "hpp"
+extension "c" "hxx"
+extension "c" "inl"
+extension "c" "ipp"
+extension "c" "m"
+extension "c" "mm"
+mimetype "c" "text/x-c"
+mimetype "c" "text/x-csrc"
+mimetype "c" "text/x-chdr"
+mimetype "c" "text/x-c++src"
+mimetype "c" "text/x-c++hdr"
+
+extension "sh" "sh"
+extension "sh" "bash"
+filename "sh" ".bashrc"
+filename "sh" ".profile"
+shebang "sh" "/bin/sh"
+shebang "sh" "/bin/bash"
+shebang "sh" "env bash"
+shebang "sh" "env sh"

@@ -207,6 +207,15 @@ proc evalBoolArgument(env: Environment, arguments: seq[SyntaxNode], index: int,
     raise newException(EvaluatorError, commandID & " missing argument")
   env.eval(arguments[index]).isTruthy
 
+proc evalNumberArgument(env: Environment, arguments: seq[SyntaxNode],
+    index: int, commandID: string): float64 {.raises: [EvaluatorError].} =
+  if index >= arguments.len:
+    raise newException(EvaluatorError, commandID & " missing argument")
+  let value = env.eval(arguments[index])
+  if value.kind != Number:
+    raise newException(EvaluatorError, commandID & " expects number")
+  value.number
+
 proc evalTextListArgument(env: Environment, arguments: seq[SyntaxNode],
     index: int, commandID: string): seq[string] {.raises: [EvaluatorError].} =
   if index >= arguments.len:
@@ -484,6 +493,129 @@ proc defineStringCommand(module: var NativeModule) =
     text(output)
   )
 
+proc defineSyntaxCommands(module: var NativeModule) =
+  module.defineNative("rgb", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len notin {3, 4}:
+      raise newException(EvaluatorError, "rgb expects red, green, blue, and optional alpha")
+    dictionaryValue([
+      ("r", number(env.evalNumberArgument(arguments, 0, "rgb"))),
+      ("g", number(env.evalNumberArgument(arguments, 1, "rgb"))),
+      ("b", number(env.evalNumberArgument(arguments, 2, "rgb"))),
+      ("a", number(if arguments.len == 4:
+        env.evalNumberArgument(arguments, 3, "rgb")
+      else:
+        255.0)),
+    ])
+  )
+
+  proc syntaxRule(env: Environment, arguments: seq[SyntaxNode],
+      commandID, kind: string, expected: openArray[int]): Value {.raises: [
+      EvaluatorError].} =
+    var valid = false
+    for count in expected:
+      if arguments.len == count:
+        valid = true
+        break
+    if not valid:
+      raise newException(EvaluatorError, commandID & " got " & $arguments.len &
+          " arguments")
+    let pattern = env.evalTextArgument(arguments, 0, commandID)
+    var stop = ""
+    let colorIndex =
+      if arguments.len == 3:
+        stop = env.evalTextArgument(arguments, 1, commandID)
+        2
+      else:
+        1
+    dictionaryValue([
+      ("kind", text(kind)),
+      ("pattern", text(pattern)),
+      ("stop", text(stop)),
+      ("color", env.eval(arguments[colorIndex])),
+    ])
+
+  module.defineNative("regex", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    env.syntaxRule(arguments, "regex", "regex", [2])
+  )
+
+  module.defineNative("word", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    env.syntaxRule(arguments, "word", "word", [2])
+  )
+
+  module.defineNative("starts-with", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    env.syntaxRule(arguments, "starts-with", "starts-with", [2])
+  )
+
+  module.defineNative("contains", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    env.syntaxRule(arguments, "contains", "contains", [2])
+  )
+
+  module.defineNative("span", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    env.syntaxRule(arguments, "span", "span", [3])
+  )
+
+  module.defineNative("syntax", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 2:
+      raise newException(EvaluatorError, "syntax expects name and rules")
+    let name = env.evalTextArgument(arguments, 0, "syntax")
+    let rules = env.eval(arguments[1])
+    if rules.kind != List:
+      raise newException(EvaluatorError, "syntax expects a rule list")
+    dictionaryValue([
+      ("name", text(name)),
+      ("rules", rules),
+    ])
+  )
+
 proc defineBridgeGetter(module: var NativeModule, commandID, getterName: string,
     bridge: NideOwlBridge) =
   module.defineNative(commandID, proc(
@@ -687,6 +819,7 @@ proc registerInternalCommands*(evaluator: var Evaluator,
   nide.defineBridgeGetter("get-active-project-path", "active-project-path", bridge)
   nide.defineBridgeGetter("get-home-directory", "home-directory", bridge)
   nide.defineBridgeGetter("get-panels", "panels", bridge)
+  nide.defineBridgeGetter("get-current-mode", "active-buffer-mode", bridge)
   nide.defineBridgeGetter("auto-track-opened-projects",
       "auto-track-opened-projects", bridge)
   nide.defineBridgeRequest("open-project", "project.open", bridge, [1])
@@ -702,9 +835,13 @@ proc registerInternalCommands*(evaluator: var Evaluator,
   nide.defineBridgeRequest("save-projects", "projects.save", bridge, [0])
   nide.defineBridgeRequest("set-nide-status", "status.set", bridge, [1])
   nide.defineBridgeRequest("toggle-panel", "panel.toggle", bridge, [1])
+  nide.defineBridgeRequest("set-editor-syntax", "buffer.set-syntax", bridge, [1])
+  nide.defineBridgeRequest("clear-editor-syntax", "buffer.clear-syntax", bridge, [0])
+  nide.defineBridgeRequest("set-mode-hook", "buffer.set-mode-hook", bridge, [2])
   nide.defineFileSystemCommands()
   nide.defineFileExplorerCommands(bridge)
   nide.defineStringCommand()
+  nide.defineSyntaxCommands()
   nide.defineTextContains()
 
   evaluator.registerModule(nide)

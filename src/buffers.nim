@@ -10,6 +10,7 @@ type
     id*: BufferID
     path*: string
     fileMode*: FileMode
+    modeHooks*: Table[string, string]
     name*: string
     editor*: EditorState
     savedText*: string
@@ -26,7 +27,7 @@ proc genBufferID*(): BufferID =
 proc init*(T: typedesc[Buffer], id: BufferID, name = "Untitled 1",
     content = "", path = ""): T =
   T(id: id, path: path, name: name, editor: EditorState.new(content),
-    savedText: content)
+    savedText: content, modeHooks: initTable[string, string]())
 
 proc init*(T: typedesc[BufferManager]): T =
   T(buffers: initTable[BufferID, Buffer](), nextScratch: 1)
@@ -52,6 +53,8 @@ proc replaceWithScratch*(manager: var BufferManager, id: BufferID) =
     return
   let name = manager.scratchName
   manager.buffers[id].path = ""
+  manager.buffers[id].fileMode = FileMode""
+  manager.buffers[id].modeHooks.clear()
   manager.buffers[id].name = name
   manager.buffers[id].editor = EditorState.new("")
   manager.buffers[id].savedText = ""
@@ -62,6 +65,8 @@ proc replaceWithFile*(manager: var BufferManager, id: BufferID, path: string) =
     return
   let content = readFile(path)
   manager.buffers[id].path = path
+  manager.buffers[id].fileMode = FileMode""
+  manager.buffers[id].modeHooks.clear()
   manager.buffers[id].name = extractFilename(path)
   manager.buffers[id].editor = EditorState.new(content)
   manager.buffers[id].savedText = content

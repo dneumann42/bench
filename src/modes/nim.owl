@@ -1,0 +1,34 @@
+use nide:
+  include rgb set-editor-syntax set-mode-hook syntax regex word span starts-with contains clear-editor-syntax
+
+define:
+  nimKeywordColor = rgb 178 139 222
+  nimTypeColor = rgb 104 184 222
+  nimStringColor = rgb 226 196 92
+  nimNumberColor = rgb 225 158 104
+  nimCommentColor = rgb 142 153 158
+  nimOperatorColor = rgb 222 116 139
+  nimProcColor = rgb 110 219 188
+  nimPragmaColor = rgb 145 139 232
+
+fun nim-enable-highlighting:
+  define:
+    nimRules = []:
+      span "#[" "]#" nimCommentColor
+      starts-with "#" nimCommentColor
+      span "\"\"\"" "\"\"\"" nimStringColor
+      span "\"" "\"" nimStringColor
+      span "'" "'" nimStringColor
+      regex "\\b[0-9][0-9A-Za-z_]*(\\.[0-9A-Za-z_]+)?\\b" nimNumberColor
+      regex "\\b(proc|func|method|iterator|template|macro|converter)\\s+[A-Za-z_][A-Za-z0-9_]*" nimProcColor
+      span "{." ".}" nimPragmaColor
+      regex "\\b(addr|and|as|asm|bind|block|break|case|cast|concept|const|continue|defer|discard|distinct|do|elif|else|end|enum|except|export|finally|for|from|if|import|in|include|interface|is|isnot|let|mixin|nil|not|notin|object|of|or|out|proc|func|method|iterator|template|macro|converter|ptr|raise|ref|return|shl|shr|static|try|tuple|type|using|var|when|while|xor|yield)\\b" nimKeywordColor
+      regex "\\b(bool|char|cstring|float|float32|float64|int|int8|int16|int32|int64|string|uint|uint8|uint16|uint32|uint64|seq|array|openArray|Table|HashSet|Option|Result)\\b" nimTypeColor
+      regex "[=+\\-*/<>!?::.,;|&^%@~]+" nimOperatorColor
+  set-editor-syntax (syntax "nim" nimRules)
+
+fun nim-disable-highlighting:
+  clear-editor-syntax
+
+set-mode-hook "onload" "nim-enable-highlighting"
+set-mode-hook "onunload" "nim-disable-highlighting"

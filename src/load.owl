@@ -5,7 +5,7 @@ use nide/panels:
   include set-panels panel-value
 
 use nide:
-  include get-status
+  include get-current-mode get-status
 
 block-command toolbars:
   set-toolbars (list-from (statements block))
@@ -76,6 +76,10 @@ statusbar:
   spacer (id "statusbar" "spacer"):
     width = fill
     height = fixed 1
+
+  label (id "statusbar" "mode") (get-current-mode):
+    width = fit
+    height = fit
 
   button (id "statusbar" "git") "Git":
     set-status "Git is not implemented"
