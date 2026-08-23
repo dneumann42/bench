@@ -1,7 +1,8 @@
-import std/[algorithm, os, streams, strutils, tables]
+import std/[algorithm, os, osproc, streams, strutils, tables]
 
 import nest, owl
 import nest/dialogs
+import nest/errorDialogs
 import nest/owldsl
 import sdl3
 
@@ -10,6 +11,7 @@ import widgets/[panels, toolbar]
 
 const NideCommandsSource = staticRead"commands.owl"
 const NideLoadSource = staticRead"load.owl"
+const NideSourceDir = currentSourcePath().parentDir
 const NideRunPermissiveUserConfig* {.booldefine.} = true
 const NideAutoTrackOpenedProjects* {.booldefine.} = true
 const
@@ -35,12 +37,14 @@ type
   Nide = object
     evaluator: Evaluator
     uiRuntime: NestOwlRuntime
+    owlErrorApp: NestOwlApp
     bridge: NideOwlBridge
     requestHandlers: Table[string, NideRequestHandler]
     toolbars: Toolbars
     projectManager: ProjectManager
     buffers: BufferManager
     panes: PaneManager
+    lastFocusedEditorPane: PaneID
     commandStatus: string
     panels: seq[NidePanel]
     pendingFileAction: PendingFileAction
@@ -81,6 +85,7 @@ proc pickSaveFile(callback: proc(path: string)) =
   )
 
 proc init(T: typedesc[Nide]): T =
+  let uiRuntime = NestOwlRuntime.init()
   result = Nide(evaluator: Evaluator.init(), uiRuntime: NestOwlRuntime.init(),
       bridge: NideOwlBridge.init(),
       requestHandlers: initTable[string, NideRequestHandler](),
@@ -88,8 +93,12 @@ proc init(T: typedesc[Nide]): T =
       projectManager: ProjectManager.init(),
       buffers: BufferManager.init(),
       status: "Ready")
+  result.uiRuntime = uiRuntime
+  result.owlErrorApp = NestOwlApp(rootPath: NideSourceDir / "load.owl",
+      runtime: result.uiRuntime)
   let rootBuffer = result.buffers.newScratchBuffer()
   result.panes = PaneManager.init(rootBuffer)
+  result.lastFocusedEditorPane = result.panes.activePane
   result.panels = @[
     NidePanel(id: "projects", title: "Projects", dock: PanelLeft,
       source: "projects-panel.owl", widget: "projects-panel", open: false,
@@ -147,8 +156,18 @@ proc runUserConfig(model: var Nide) =
   else:
     model.runNideSource(readFile(path), path)
 
+proc activeEditorPane(model: Nide): PaneID =
+  if model.lastFocusedEditorPane != InvalidPaneID and
+      model.lastFocusedEditorPane in model.panes.panes and
+      model.panes.panes[model.lastFocusedEditorPane].isLeaf:
+    return model.lastFocusedEditorPane
+  model.panes.activePane
+
 proc activeBufferID(model: Nide): BufferID =
-  model.panes.activeBufferID()
+  let paneID = model.activeEditorPane()
+  if paneID == InvalidPaneID or paneID notin model.panes.panes:
+    return InvalidBufferID
+  model.panes.panes[paneID].bufferID
 
 proc requestOpenFile(model: var Nide) =
   discard model
@@ -171,6 +190,9 @@ proc newFile(model: var Nide) =
 
 proc openFile(model: var Nide, path: string) =
   let id = model.activeBufferID()
+  if id == InvalidBufferID:
+    model.status = "Open failed: no focused editor pane"
+    return
   try:
     model.buffers.replaceWithFile(id, path)
     model.status = "Opened " & path
@@ -313,6 +335,8 @@ proc panelsValue(model: Nide): Value =
 proc publishBridgeData(model: var Nide) =
   model.bridge.putData("project-manager", model.projectManager.snapshot())
   model.bridge.putData("projects", model.projectManager.projectsValue())
+  model.bridge.putData("project-profile-templates",
+      projectProfileTemplatesValue())
   model.bridge.putData("active-project", text(
       model.projectManager.activeProjectName()))
   model.bridge.putData("active-project-path", text(
@@ -389,6 +413,70 @@ proc saveProjectsRequest(model: var Nide, request: NideBridgeRequest) =
     model.status = "Projects saved"
   except CatchableError as error:
     model.status = "Project action failed: " & error.msg
+
+proc profileFromRequest(request: NideBridgeRequest): ProjectProfile =
+  result = projectProfile(request.requestText(2), [])
+  for index, kind in ProjectCommandKinds:
+    let command = request.requestText(index + 3).strip()
+    if command.len > 0:
+      result.profileCommands[kind] = profileCommand(command)
+
+proc saveProjectProfileRequest(model: var Nide, request: NideBridgeRequest) =
+  try:
+    let
+      projectName = request.requestText(0)
+      originalName = request.requestText(1)
+      profile = request.profileFromRequest()
+    if model.projectManager.upsertProfile(projectName, originalName, profile):
+      model.saveProjectManager()
+      model.status = "Saved profile " & profile.name
+    else:
+      model.status = "Could not save project profile"
+  except CatchableError as error:
+    model.status = "Project profile save failed: " & error.msg
+
+proc projectPathByName(model: Nide, projectName: string): string =
+  for project in model.projectManager.projects:
+    if project.name == projectName:
+      return project.directoryPath
+  ""
+
+proc runShellCommandAsync(directoryPath, command: string): bool =
+  var process: osproc.Process
+  try:
+    process = osproc.startProcess("sh", args = @["-lc", command],
+        workingDir = directoryPath, options = {poUsePath, poDaemon,
+        poParentStreams})
+    process.close()
+    true
+  except CatchableError:
+    if process != nil:
+      try:
+        process.close()
+      except CatchableError:
+        discard
+    false
+
+proc runProjectProfileRequest(model: var Nide, request: NideBridgeRequest) =
+  try:
+    let
+      projectName = request.requestText(0)
+      profileName = request.requestText(1)
+      kindName = request.requestText(2)
+      kind = parseCommandKind(kindName)
+      directoryPath = model.projectPathByName(projectName)
+      command = model.projectManager.profileCommand(projectName, profileName,
+          kind)
+    if directoryPath.len == 0:
+      model.status = "Project not found: " & projectName
+    elif command.len == 0:
+      model.status = kindName & " is not defined for " & profileName
+    elif runShellCommandAsync(directoryPath, command):
+      model.status = kindName & " started: " & command
+    else:
+      model.status = kindName & " failed to start: " & command
+  except CatchableError as error:
+    model.status = "Project command failed: " & error.msg
 
 proc toggleProjectsPanelRequest(model: var Nide, request: NideBridgeRequest) =
   discard request
@@ -475,6 +563,8 @@ proc configureBridge(model: var Nide) =
     model.registerRequest("file-explorer." & action, fileExplorerEventRequest)
   model.registerRequest("project.open", openProjectRequest)
   model.registerRequest("project.add", addProjectRequest)
+  model.registerRequest("project.profile.save", saveProjectProfileRequest)
+  model.registerRequest("project.profile.run", runProjectProfileRequest)
   model.registerRequest("project.pick-directory", pickProjectDirectoryRequest)
   model.registerRequest("project.unload", unloadProjectRequest)
   model.registerRequest("projects.reload", reloadProjectsRequest)
@@ -517,6 +607,33 @@ proc bufferTitle(buffer: Buffer): string =
   if buffer.dirty:
     result = "*" & result
 
+proc runtimeErrorSummary(runtime: NestOwlRuntime): string =
+  let details = runtime.lastErrorDetails
+  if details.primary.path.len > 0:
+    result = details.primary.path & ":" & $details.primary.line & ":" &
+        $details.primary.column & ": " & details.message
+  elif runtime.lastError.len > 0:
+    result = runtime.lastError
+  else:
+    result = "unknown Owl error"
+
+proc clearRuntimeError(runtime: NestOwlRuntime) =
+  runtime.hasError = false
+  runtime.lastError = ""
+  runtime.lastErrorDetails = ErrorDetails()
+
+proc consumeRuntimeError(model: var Nide, context: string): bool =
+  if model.uiRuntime.hasError:
+    var details = model.uiRuntime.lastErrorDetails
+    if details.message.len == 0:
+      details.message = model.uiRuntime.runtimeErrorSummary()
+    details.message = context & " failed: " & details.message
+    model.owlErrorApp.launchOwlErrorDialog(details)
+    model.status = context & " failed; see Owl error dialog"
+    model.uiRuntime.clearRuntimeError()
+    return true
+  false
+
 proc layoutPane(ui: var UI, model: var Nide, paneID: PaneID) =
   if paneID == InvalidPaneID or paneID notin model.panes.panes:
     return
@@ -545,6 +662,7 @@ proc layoutPane(ui: var UI, model: var Nide, paneID: PaneID) =
 
     if ui.clicked(panelID) or ui.focused(editorID):
       model.panes.focus(paneID)
+      model.lastFocusedEditorPane = paneID
   elif pane.orientation == Row:
     ui.row(ui.id("row", paneID), cfg(width = fill(min = MinPaneWidth),
         height = fill(min = MinPaneHeight), gap = 4,
@@ -569,32 +687,33 @@ proc renderPanelDock(ui: var UI, model: var Nide, dock: PanelDock) =
 
   for panel in model.panels:
     if panel.dock == dock and panel.open:
-      model.uiRuntime.renderWidget(ui, currentSourcePath().parentDir /
+      model.uiRuntime.renderWidget(ui, NideSourceDir /
           panel.source, panel.widget)
-      if model.uiRuntime.hasError:
-        model.status = panel.title & " panel failed: " &
-            model.uiRuntime.lastError
+      if model.consumeRuntimeError(panel.title & " panel"):
         model.uiRuntime.evaluator.env.bindText(VarStatus, model.status)
-        model.uiRuntime.hasError = false
-        model.uiRuntime.lastError = ""
       model.processBridgeRequests()
 
 widget nideApplication(model: var Nide):
+  model.owlErrorApp.pollOwlErrorDialog()
   model.processPendingFileAction()
   model.uiRuntime.evaluator.env.bindText(VarStatus, model.status)
   model.publishBridgeData()
   model.processBridgeRequests()
 
   ui.column(ui.id("root"), cfg(width = fill(), height = fill(), gap = 0)):
-    for event in ui.toolbarDock(model.toolbars, TopDock):
+    for event in ui.toolbarDock(model.toolbars, model.uiRuntime, TopDock,
+        NideSourceDir):
       model.handleToolbarEvent(ui, event)
+    discard model.consumeRuntimeError("Top toolbar")
 
     ui.renderPanelDock(model, PanelTop)
 
     ui.row(ui.id("workspaceDockRow"), cfg(width = fill(), height = fill(),
         gap = 0, alignSelf = AlignStretch)):
-      for event in ui.toolbarDock(model.toolbars, LeftDock):
+      for event in ui.toolbarDock(model.toolbars, model.uiRuntime, LeftDock,
+          NideSourceDir):
         model.handleToolbarEvent(ui, event)
+      discard model.consumeRuntimeError("Left toolbar")
 
       ui.renderPanelDock(model, PanelLeft)
 
@@ -611,17 +730,21 @@ widget nideApplication(model: var Nide):
 
       ui.renderPanelDock(model, PanelRight)
 
-      for event in ui.toolbarDock(model.toolbars, RightDock):
+      for event in ui.toolbarDock(model.toolbars, model.uiRuntime, RightDock,
+          NideSourceDir):
         model.handleToolbarEvent(ui, event)
+      discard model.consumeRuntimeError("Right toolbar")
 
     ui.renderPanelDock(model, PanelBottom)
 
-    for event in ui.toolbarDock(model.toolbars, BottomDock):
+    for event in ui.toolbarDock(model.toolbars, model.uiRuntime, BottomDock,
+        NideSourceDir):
       model.handleToolbarEvent(ui, event)
+    discard model.consumeRuntimeError("Bottom toolbar")
 
     ui.statusbar(model.uiRuntime)
 
-when isMainModule:
+proc start =
   let config = AppConfig.init(width = 900, height = 640, title = "Nide")
   var nide = Nide.init()
   nide.configureBridge()
@@ -649,3 +772,6 @@ when isMainModule:
     quit 1
 
   runApp(config, nide, nideApplication)
+
+when isMainModule:
+  start()

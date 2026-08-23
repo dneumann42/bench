@@ -1,4 +1,4 @@
-import std/tables
+import std/[os, tables]
 
 import nest, owl
 import nest/owldsl
@@ -28,9 +28,15 @@ type
     label*: string
     commandID*: string
 
+  ToolbarWidget* = object
+    id*: string
+    source*: string
+    widget*: string
+
   ToolbarControlKind* = enum
     ToolbarMenuControl
     ToolbarToolControl
+    ToolbarWidgetControl
     ToolbarSpacerControl
 
   ToolbarControl* = object
@@ -39,6 +45,8 @@ type
       menu*: ToolbarMenu
     of ToolbarToolControl:
       tool*: ToolbarTool
+    of ToolbarWidgetControl:
+      widget*: ToolbarWidget
     of ToolbarSpacerControl:
       spacerID*: string
 
@@ -75,11 +83,17 @@ proc toolbarTool*(id, label: string, commandID = ""): ToolbarTool =
   ToolbarTool(id: id, label: label,
       commandID: if commandID.len > 0: commandID else: id)
 
+proc toolbarWidget*(id, source, widget: string): ToolbarWidget =
+  ToolbarWidget(id: id, source: source, widget: widget)
+
 proc toolbarMenuControl*(menu: ToolbarMenu): ToolbarControl =
   ToolbarControl(kind: ToolbarMenuControl, menu: menu)
 
 proc toolbarToolControl*(tool: ToolbarTool): ToolbarControl =
   ToolbarControl(kind: ToolbarToolControl, tool: tool)
+
+proc toolbarWidgetControl*(widget: ToolbarWidget): ToolbarControl =
+  ToolbarControl(kind: ToolbarWidgetControl, widget: widget)
 
 proc toolbarSpacer*(id = ""): ToolbarControl =
   ToolbarControl(kind: ToolbarSpacerControl, spacerID: id)
@@ -134,6 +148,12 @@ proc addTool*(toolbar: var Toolbar, tool: ToolbarTool) =
 proc addTool*(toolbar: var Toolbar, id, label: string, commandID = "") =
   toolbar.addTool toolbarTool(id, label, commandID)
 
+proc addWidget*(toolbar: var Toolbar, widget: ToolbarWidget) =
+  toolbar.controls.add toolbarWidgetControl(widget)
+
+proc addWidget*(toolbar: var Toolbar, id, source, widget: string) =
+  toolbar.addWidget toolbarWidget(id, source, widget)
+
 proc addSpacer*(toolbar: var Toolbar, id = "") =
   toolbar.controls.add toolbarSpacer(id)
 
@@ -152,6 +172,11 @@ proc addTool*(
     toolbars: var Toolbars, toolbarID, id, label: string, commandID = ""
 ) {.raises: [EvaluatorError].} =
   toolbars.toolbarView(toolbarID).addTool(id, label, commandID)
+
+proc addWidget*(
+    toolbars: var Toolbars, toolbarID, id, source, widget: string
+) {.raises: [EvaluatorError].} =
+  toolbars.toolbarView(toolbarID).addWidget(id, source, widget)
 
 proc addSpacer*(toolbars: var Toolbars, toolbarID: string, id = "") {.raises: [
     EvaluatorError].} =
@@ -242,6 +267,15 @@ proc readToolbarTool(value: Value): ToolbarTool {.raises: [EvaluatorError].} =
     value.textField("command", "toolbar tool"),
   )
 
+proc readToolbarWidget(value: Value): ToolbarWidget {.raises: [EvaluatorError].} =
+  if value.textField("kind", "toolbar widget") != "widget":
+    raise newException(EvaluatorError, "expected toolbar widget")
+  toolbarWidget(
+    value.textField("id", "toolbar widget"),
+    value.textField("source", "toolbar widget"),
+    value.textField("widget", "toolbar widget"),
+  )
+
 proc readToolbarSpacer(value: Value): ToolbarControl {.raises: [
     EvaluatorError].} =
   if value.textField("kind", "toolbar spacer") != "spacer":
@@ -262,6 +296,8 @@ proc readToolbar*(value: Value): Toolbar {.raises: [EvaluatorError].} =
       result.addMenu readToolbarMenu(child)
     of "tool":
       result.addTool readToolbarTool(child)
+    of "widget":
+      result.addWidget readToolbarWidget(child)
     of "spacer":
       result.controls.add readToolbarSpacer(child)
     else:
@@ -329,6 +365,16 @@ proc registerToolbarBuilderCommands*(evaluator: var Evaluator) =
       ("command", text(env.evalTextArgument(arguments, 2, "tool-value"))),
     ])
 
+  module.native "widget-value":
+    discard layout
+    discard bodyNodes
+    expectArgumentCount("widget-value", arguments.len, [3])
+    toolbarValue("widget", [
+      ("id", text(env.evalTextArgument(arguments, 0, "widget-value"))),
+      ("source", text(env.evalTextArgument(arguments, 1, "widget-value"))),
+      ("widget", text(env.evalTextArgument(arguments, 2, "widget-value"))),
+    ])
+
   module.native "spacer-value":
     discard layout
     discard bodyNodes
@@ -351,7 +397,9 @@ proc registerToolbarBuilderCommands*(evaluator: var Evaluator) =
 
   evaluator.registerModule(module)
 
-widget toolbar*(model: var Toolbar)emits ToolbarEvent:
+widget toolbar*(
+    model: var Toolbar, runtime: NestOwlRuntime, libraryRoot = ""
+)emits ToolbarEvent:
   let vertical = model.dock.isVertical()
   var spacerIndex = model.controls.len
   for index, control in model.controls:
@@ -374,6 +422,14 @@ widget toolbar*(model: var Toolbar)emits ToolbarEvent:
       if ui.button(ui.id("tool", model.id, tool.id), tool.label):
         emit ToolbarEvent(kind: ToolClicked, toolbarID: model.id,
             toolID: tool.id, commandID: tool.commandID)
+    of ToolbarWidgetControl:
+      let custom = control.widget
+      let source =
+        if custom.source.len > 0 and libraryRoot.len > 0:
+          libraryRoot / custom.source
+        else:
+          custom.source
+      runtime.renderWidget(ui, source, custom.widget)
     of ToolbarSpacerControl:
       discard
 
@@ -415,7 +471,10 @@ widget toolbar*(model: var Toolbar)emits ToolbarEvent:
                   itemMenuID: menu.id, itemID: item.id,
                   commandID: item.commandID)
 
-widget toolbarDock*(model: var Toolbars, dock: ToolbarDock)emits ToolbarEvent:
+widget toolbarDock*(
+    model: var Toolbars, runtime: NestOwlRuntime, dock: ToolbarDock,
+    libraryRoot = "",
+)emits ToolbarEvent:
   let vertical = dock.isVertical()
   let hasBars = block:
     var found = false
@@ -430,14 +489,14 @@ widget toolbarDock*(model: var Toolbars, dock: ToolbarDock)emits ToolbarEvent:
         alignSelf = AlignStretch)):
       for index in 0 ..< model.bars.len:
         if model.bars[index].dock == dock:
-          for event in ui.toolbar(model.bars[index]):
+          for event in ui.toolbar(model.bars[index], runtime, libraryRoot):
             emit event
   elif hasBars:
     ui.column(ui.id("dock", $dock), cfg(width = fill(), height = fit(),
         gap = 0)):
       for index in 0 ..< model.bars.len:
         if model.bars[index].dock == dock:
-          for event in ui.toolbar(model.bars[index]):
+          for event in ui.toolbar(model.bars[index], runtime, libraryRoot):
             emit event
 
 widget statusbar*(runtime: NestOwlRuntime):

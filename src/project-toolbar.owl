@@ -1,0 +1,262 @@
+use nide:
+  include get-active-project get-projects get-project-profile-templates run-project-profile save-project-profile set-nide-status string
+
+state "project-toolbar":
+  selectedProfileIndex = 0
+  selectedTemplateIndex = 0
+  showProfileDialog = false
+  editingOriginalName = ""
+  profileNameID = (id "project-toolbar" "profile-name")
+  buildID = (id "project-toolbar" "build-command")
+  runID = (id "project-toolbar" "run-command")
+  checkID = (id "project-toolbar" "check-command")
+  formatID = (id "project-toolbar" "format-command")
+  templateID = (id "project-toolbar" "template")
+  profilesID = (id "project-toolbar" "profiles")
+
+fun active-project-from projects activeName:
+  cond:
+    when (empty? projects):
+      nothing
+    when (= (dict-get (first projects) "name") activeName):
+      first projects
+    when true:
+      active-project-from (rest projects) activeName
+
+fun profile-labels profiles:
+  define:
+    labels = []
+  for profile (iter profiles):
+    append labels (dict-get profile "name")
+  labels
+
+fun command-text profile kind:
+  define:
+    commands = (dict-get profile "profileCommands")
+    command = (dict-get commands kind)
+  if (= command nothing):
+    ""
+  else:
+    dict-get command "shellCommand"
+
+fun command-defined? profile kind:
+  not (= (command-text profile kind) "")
+
+fun selected-profile profiles:
+  cond:
+    when (empty? profiles):
+      nothing
+    when (< selectedProfileIndex (length profiles)):
+      nth profiles selectedProfileIndex
+    when true:
+      first profiles
+
+fun selected-template templates:
+  cond:
+    when (empty? templates):
+      nothing
+    when (< selectedTemplateIndex (length templates)):
+      nth templates selectedTemplateIndex
+    when true:
+      first templates
+
+fun fill-profile-form profile originalName:
+  set editingOriginalName originalName
+  setEditorText profileNameID (dict-get profile "name")
+  setEditorText buildID (command-text profile "Build")
+  setEditorText runID (command-text profile "Run")
+  setEditorText checkID (command-text profile "Check")
+  setEditorText formatID (command-text profile "Format")
+
+fun open-new-profile-dialog templates:
+  define:
+    template = (selected-template templates)
+  when (not (= template nothing)):
+    fill-profile-form template ""
+    set showProfileDialog true
+
+fun open-edit-profile-dialog profile:
+  when (not (= profile nothing)):
+    fill-profile-form profile (dict-get profile "name")
+    set showProfileDialog true
+
+fun profile-task-button project profile kind label:
+  when (command-defined? profile kind):
+    button (id "project-toolbar" "task" kind) label:
+      width = fit
+      height = fit
+      buttonPadding = 8
+    when (clicked (id "project-toolbar" "task" kind)):
+      run-project-profile (dict-get project "name") (dict-get profile "name") kind
+
+fun project-profile-dialog project templates:
+  define:
+    templateLabels = (profile-labels templates)
+    pickedTemplate = nothing
+    cancelID = (id "project-toolbar" "cancel")
+    saveID = (id "project-toolbar" "save")
+
+  events:
+    set pickedTemplate (combobox templateID selectedTemplateIndex templateLabels)
+    when (not (= pickedTemplate nothing)):
+      set selectedTemplateIndex pickedTemplate
+      fill-profile-form (selected-template templates) editingOriginalName
+    when (clicked cancelID):
+      set showProfileDialog false
+    when (clicked saveID):
+      save-project-profile
+        (dict-get project "name")
+        editingOriginalName
+        (editorText profileNameID)
+        (editorText buildID)
+        (editorText runID)
+        (editorText checkID)
+        (editorText formatID)
+      set showProfileDialog false
+
+  modalDialog (id "project-toolbar" "dialog") showProfileDialog:
+    width = fixed 520
+    height = fit
+    padding = 12
+    gap = 10
+    alignItems = AlignStretch
+    background = color 30 34 38
+    dialogHeader (id "project-toolbar" "dialog-header"):
+      width = fill
+      height = fit
+      padding = 6
+      label (id "project-toolbar" "dialog-title") "Project Profile":
+        width = fill
+        height = fit
+    row (id "project-toolbar" "template-row"):
+      width = fill
+      height = fit
+      gap = 8
+      alignItems = AlignCenter
+      label (id "project-toolbar" "template-label") "Template":
+        width = fixed 86
+        height = fit
+      combobox templateID selectedTemplateIndex templateLabels:
+        width = fill
+        height = fit
+    row (id "project-toolbar" "name-row"):
+      width = fill
+      height = fit
+      gap = 8
+      alignItems = AlignCenter
+      label (id "project-toolbar" "name-label") "Name":
+        width = fixed 86
+        height = fit
+      lineInput profileNameID "":
+        width = fill
+        height = fixed 30
+    row (id "project-toolbar" "build-row"):
+      width = fill
+      height = fit
+      gap = 8
+      alignItems = AlignCenter
+      label (id "project-toolbar" "build-label") "Build":
+        width = fixed 86
+        height = fit
+      lineInput buildID "":
+        width = fill
+        height = fixed 30
+    row (id "project-toolbar" "run-row"):
+      width = fill
+      height = fit
+      gap = 8
+      alignItems = AlignCenter
+      label (id "project-toolbar" "run-label") "Run":
+        width = fixed 86
+        height = fit
+      lineInput runID "":
+        width = fill
+        height = fixed 30
+    row (id "project-toolbar" "check-row"):
+      width = fill
+      height = fit
+      gap = 8
+      alignItems = AlignCenter
+      label (id "project-toolbar" "check-label") "Check":
+        width = fixed 86
+        height = fit
+      lineInput checkID "":
+        width = fill
+        height = fixed 30
+    row (id "project-toolbar" "format-row"):
+      width = fill
+      height = fit
+      gap = 8
+      alignItems = AlignCenter
+      label (id "project-toolbar" "format-label") "Format":
+        width = fixed 86
+        height = fit
+      lineInput formatID "":
+        width = fill
+        height = fixed 30
+    row (id "project-toolbar" "actions"):
+      width = fill
+      height = fit
+      gap = 8
+      justifyContent = JustifyEnd
+      button cancelID "Cancel":
+        width = fixed 86
+        height = fit
+      button saveID "Save":
+        width = fixed 86
+        height = fit
+
+widget project-toolbar:
+  define:
+    activeName = (get-active-project)
+    project = (active-project-from (get-projects) activeName)
+    templates = (get-project-profile-templates)
+    profiles = (cond:
+      when (= project nothing):
+        []
+      when true:
+        dict-get project "profiles"
+    )
+    labels = (profile-labels profiles)
+    profile = (selected-profile profiles)
+    pickedProfile = nothing
+    editID = (id "project-toolbar" "edit")
+    newID = (id "project-toolbar" "new")
+
+  events:
+    set pickedProfile (combobox profilesID selectedProfileIndex labels)
+    when (not (= pickedProfile nothing)):
+      set selectedProfileIndex pickedProfile
+    when (clicked newID):
+      open-new-profile-dialog templates
+    when (clicked editID):
+      open-edit-profile-dialog profile
+
+  row (id "project-toolbar" "root"):
+    width = fit
+    height = fit
+    gap = 6
+    alignItems = AlignCenter
+    button editID "Edit":
+      width = fit
+      height = fit
+      buttonPadding = 8
+    button newID "New":
+      width = fit
+      height = fit
+      buttonPadding = 8
+    if (or (= project nothing) (empty? profiles)):
+      label (id "project-toolbar" "empty") "No project":
+        width = fixed 120
+        height = fit
+    else:
+      combobox profilesID selectedProfileIndex labels:
+        width = fixed 150
+        height = fit
+      profile-task-button project profile "Build" "Build"
+      profile-task-button project profile "Run" "Run"
+      profile-task-button project profile "Check" "Check"
+      profile-task-button project profile "Format" "Format"
+
+  when (not (= project nothing)):
+    project-profile-dialog project templates

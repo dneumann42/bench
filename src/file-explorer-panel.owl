@@ -42,19 +42,16 @@ fun file-explorer-row item:
     rowID = (tree-node-row-id "file-explorer" item.path)
     openID = (tree-node-open-id "file-explorer" item.path)
   tree-row "file-explorer" item:
-    row openID:
+    button openID (string item.icon " " item.name):
       width = fill
-      height = fit
-      gap = 6
-      alignItems = AlignCenter
-      label (id rowID "icon") item.icon:
-        width = fixed 24
-        height = fit
-        fontName = "editor"
-      label (id rowID "label") item.name:
-        width = fill
-        height = fit
-        textScroll = true
+      height = fixed 26
+      fontName = "editor"
+      buttonPadding = (insets 6 2 6 2)
+      buttonBorderStyle = ButtonBorderNone
+      buttonChromeStyle = ButtonChromeFlat
+      buttonTextAlign = JustifyStart
+      background = (pick item.selected (color 43 83 106) (color 0 0 0 0))
+      textScroll = true
   tooltip openID item.path
 
 widget file-explorer-panel:
@@ -88,8 +85,8 @@ widget file-explorer-panel:
         file-explorer-event "toggle" item.path
       when (clicked (tree-node-open-id "file-explorer" item.path)):
         set selectedPath item.path
-        file-explorer-event "select" item.path
         when item.isDir:
+          file-explorer-event "select" item.path
           set expandedPaths (text-list-toggle expandedPaths item.path)
           file-explorer-event "toggle" item.path
         when (not item.isDir):

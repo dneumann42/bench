@@ -681,6 +681,8 @@ proc registerInternalCommands*(evaluator: var Evaluator,
   nide.defineGetter("get-status", VarStatus)
   nide.defineBridgeGetter("get-project-manager", "project-manager", bridge)
   nide.defineBridgeGetter("get-projects", "projects", bridge)
+  nide.defineBridgeGetter("get-project-profile-templates",
+      "project-profile-templates", bridge)
   nide.defineBridgeGetter("get-active-project", "active-project", bridge)
   nide.defineBridgeGetter("get-active-project-path", "active-project-path", bridge)
   nide.defineBridgeGetter("get-home-directory", "home-directory", bridge)
@@ -691,6 +693,10 @@ proc registerInternalCommands*(evaluator: var Evaluator,
   nide.defineBridgeRequest("pick-project-directory", "project.pick-directory",
       bridge, [0])
   nide.defineBridgeRequest("add-project", "project.add", bridge, [2])
+  nide.defineBridgeRequest("save-project-profile", "project.profile.save",
+      bridge, [7])
+  nide.defineBridgeRequest("run-project-profile", "project.profile.run",
+      bridge, [3])
   nide.defineBridgeRequest("unload-project", "project.unload", bridge, [0])
   nide.defineBridgeRequest("reload-projects", "projects.reload", bridge, [0])
   nide.defineBridgeRequest("save-projects", "projects.save", bridge, [0])

@@ -1,5 +1,5 @@
 use nide/toolbar:
-  include set-toolbars toolbar-value menu-value item-value tool-value spacer-value statusbar
+  include set-toolbars toolbar-value menu-value item-value tool-value widget-value spacer-value statusbar
 
 use nide/panels:
   include set-panels panel-value
@@ -28,6 +28,9 @@ fun toolbar-item id label command:
 fun toolbar-tool id label command:
   tool-value id label command
 
+fun toolbar-widget id source widget:
+  widget-value id source widget
+
 fun toolbar-spacer:
   spacer-value
 
@@ -51,8 +54,7 @@ toolbars:
     file-menu
     project-menu
     toolbar-spacer
-    toolbar-tool "build" "Build" "project-build"
-    toolbar-tool "run" "Run" "project-run"
+    toolbar-widget "project-toolbar" "project-toolbar.owl" "project-toolbar"
 
   toolbar "pane-tools" "left":
     toolbar-tool "toggleProjectsPanel" "P" "toggle-projects-panel"
@@ -75,5 +77,5 @@ statusbar:
     width = fill
     height = fixed 1
 
-  button (id "statusbar" "hello-world") "Hello, World!":
-    nothing
+  button (id "statusbar" "git") "Git":
+    set-status "Git is not implemented"
