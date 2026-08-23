@@ -100,14 +100,14 @@ proc toolbarDock*(name: string): ToolbarDock {.raises: [EvaluatorError].} =
 proc isVertical*(dock: ToolbarDock): bool =
   dock in {LeftDock, RightDock}
 
-proc initToolbar*(id = "", dock = TopDock): Toolbar =
+proc init*(T: typedesc[Toolbar], id = "", dock = TopDock): Toolbar =
   Toolbar(id: id, dock: dock, controls: @[], openMenu: "")
 
-proc initToolbars*(): Toolbars =
+proc init*(T: typedesc[Toolbars]): T =
   Toolbars(bars: @[])
 
 proc addToolbar*(toolbars: var Toolbars, id: string, dock: ToolbarDock) =
-  toolbars.bars.add initToolbar(id, dock)
+  toolbars.bars.add Toolbar.init(id, dock)
 
 proc toolbarView(toolbars: var Toolbars, id: string): var Toolbar =
   for bar in toolbars.bars.mitems:
@@ -251,7 +251,7 @@ proc readToolbarSpacer(value: Value): ToolbarControl {.raises: [
 proc readToolbar*(value: Value): Toolbar {.raises: [EvaluatorError].} =
   if value.textField("kind", "toolbar") != "toolbar":
     raise newException(EvaluatorError, "expected toolbar")
-  result = initToolbar(
+  result = Toolbar.init(
     value.textField("id", "toolbar"),
     toolbarDock(value.textField("dock", "toolbar")),
   )
@@ -272,7 +272,7 @@ proc readToolbars*(env: Environment, name: string): Toolbars {.raises: [
   let value = env.get(name)
   if value.kind != List:
     raise newException(EvaluatorError, name & " must be a list")
-  result = initToolbars()
+  result = Toolbars.init()
   for toolbarValue in value.items:
     result.bars.add readToolbar(toolbarValue)
 

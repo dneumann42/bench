@@ -1,0 +1,100 @@
+use nide:
+  include get-active-project get-projects open-project unload-project reload-projects save-projects text-contains
+
+state "projects-panel":
+  searchID = (id "projects" "search")
+  reloadID = (id "projects" "reload")
+  saveID = (id "projects" "save")
+
+fun project-matches project query:
+  or (text-contains project.name query true) (text-contains project.directoryPath query true)
+
+fun project-card project active:
+  define:
+    cardID = (id "projects" "project" project.name)
+    openID = (id "projects" "project" project.name "open")
+    unloadID = (id "projects" "project" project.name "unload")
+  card cardID:
+    width = fill
+    height = fit
+    padding = 8
+    gap = 6
+    alignItems = AlignStretch
+    background = (pick active (color 31 68 70) (color 31 34 38))
+    shadow = active
+    label (id cardID "name") (string (pick active "Active: " "") project.name):
+      width = fill
+      height = fit
+      textScroll = true
+    label (id cardID "path") project.directoryPath:
+      width = fill
+      height = fit
+      textScroll = true
+    row (id cardID "actions"):
+      width = fill
+      height = fit
+      gap = 6
+      alignItems = AlignCenter
+      when (not active):
+        button openID "Open":
+          width = fill
+          height = fit
+      when active:
+        button unloadID "Unload":
+          width = fit
+          height = fit
+
+widget projects-panel:
+  define:
+    activeProject = (get-active-project)
+    projects = (get-projects)
+    query = (editorText searchID)
+
+  events:
+    when (clicked reloadID):
+      reload-projects
+    when (clicked saveID):
+      save-projects
+    for project (iter projects):
+      when (clicked (id "projects" "project" project.name "open")):
+        open-project project.name
+      when (and (= project.name activeProject) (clicked (id "projects" "project" project.name "unload"))):
+        unload-project
+
+  panel (id "projects" "panel"):
+    width = fixed 280
+    height = fill
+    padding = 8
+    gap = 8
+    alignItems = AlignStretch
+    background = color 25 28 32
+    column (id "projects" "header"):
+      width = fill
+      height = fit
+      gap = 6
+      alignItems = AlignStretch
+      label (id "projects" "title") "Projects":
+        width = fill
+        height = fit
+      lineInput searchID "":
+        width = fill
+        height = fixed 30
+      row (id "projects" "tools"):
+        width = fill
+        height = fit
+        gap = 6
+        button reloadID "Reload":
+          width = fill
+          height = fit
+        button saveID "Save":
+          width = fill
+          height = fit
+    column (id "projects" "list"):
+      width = fill
+      height = fill
+      gap = 8
+      scrollY = true
+      alignItems = AlignStretch
+      for project (iter projects):
+        when (project-matches project query):
+          project-card project (= project.name activeProject)

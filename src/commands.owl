@@ -1,5 +1,5 @@
 use nide:
-  include request-action set-split-orientation set-status version
+  include add-project auto-track-opened-projects directory-files dir-exists? file-exists? get-projects open-project path-base-name path-join path-normalize path-parent path-stem pick-project-directory request-action save-projects set-nide-status set-status string text-contains version
 
 fun file-new:
   request-action "new-file"
@@ -41,16 +41,85 @@ fun file-save-as:
   request-action "save-file-as-dialog"
 
 fun pane-split-column:
-  set-split-orientation "column"
+  request-action "pane.split-column"
 
 fun pane-split-row:
-  set-split-orientation "row"
+  request-action "pane.split-row"
 
 fun pane-unsplit:
-  request-action "unsplit-pane"
+  request-action "pane.unsplit"
+
+fun project-for-path projects path:
+  define:
+    normalizedPath = (path-normalize path)
+  cond:
+    when (empty? projects):
+      nothing
+    when (= (path-normalize (first projects).directoryPath) normalizedPath):
+      first projects
+    when true:
+      project-for-path (rest projects) normalizedPath
+
+fun nimble-file-in files:
+  cond:
+    when (empty? files):
+      ""
+    when (text-contains (path-base-name (first files)) ".nimble" true):
+      first files
+    when true:
+      nimble-file-in (rest files)
+
+fun find-nimble-project-dir path:
+  define:
+    normalizedPath = (path-normalize path)
+    nimbleFile = (nimble-file-in (directory-files normalizedPath))
+    parent = (path-parent normalizedPath)
+  cond:
+    when (not (dir-exists? normalizedPath)):
+      ""
+    when (not (= nimbleFile "")):
+      normalizedPath
+    when (or (= parent normalizedPath) (= parent "")):
+      ""
+    when true:
+      find-nimble-project-dir parent
+
+fun nimble-project-name projectDir:
+  define:
+    nimbleFile = (nimble-file-in (directory-files projectDir))
+  if (= nimbleFile ""):
+    path-base-name projectDir
+  else:
+    path-stem nimbleFile
+
+fun open-tracked-or-new-project projectDir:
+  define:
+    normalizedDir = (path-normalize projectDir)
+    tracked = (project-for-path (get-projects) normalizedDir)
+  if (= tracked nothing):
+    if auto-track-opened-projects:
+      define:
+        projectName = (nimble-project-name normalizedDir)
+      add-project projectName normalizedDir
+      open-project projectName
+      save-projects
+      set-nide-status (string "Added project " projectName)
+    else:
+      set-nide-status (string "Project is not tracked: " normalizedDir)
+  else:
+    open-project tracked.name
+    set-nide-status (string "Opened project " tracked.name)
+
+fun project-open-path path:
+  define:
+    projectDir = (find-nimble-project-dir path)
+  if (= projectDir ""):
+    set-nide-status (string "No Nimble project found at " path)
+  else:
+    open-tracked-or-new-project projectDir
 
 fun project-open:
-  set-status "Open project is not implemented"
+  pick-project-directory
 
 fun project-run:
   set-status "Run project is not implemented"
@@ -60,3 +129,6 @@ fun project-build:
 
 fun project-settings:
   set-status "Project settings are not implemented"
+
+fun toggle-projects-panel:
+  request-action "toggle-projects-panel"

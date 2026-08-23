@@ -46,6 +46,8 @@ toolbars:
     toolbar-tool "run" "Run" "project-run"
 
   toolbar "pane-tools" "left":
+    toolbar-tool "toggleProjectsPanel" "P" "toggle-projects-panel"
+    toolbar-spacer
     toolbar-tool "splitColumn" "=" "pane-split-column"
     toolbar-tool "splitRow" "%" "pane-split-row"
     toolbar-tool "unsplit" "x" "pane-unsplit"
