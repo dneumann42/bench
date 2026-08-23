@@ -107,11 +107,26 @@ proc defineSetter(module: var NativeModule, commandID, variable: string) =
     env.set(variable, result)
   )
 
+proc defineGetter(module: var NativeModule, commandID, variable: string) =
+  module.defineNative(commandID, proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, commandID & " expects no arguments")
+    env.get(variable)
+  )
+
 proc registerInternalCommands*(evaluator: var Evaluator) =
   var nide = nativeModule"nide"
   nide.define "version", text"0.0.0"
   nide.defineRequestAction()
   nide.defineSetter("set-split-orientation", VarSplitOrientation)
   nide.defineSetter("set-status", VarStatus)
+  nide.defineGetter("get-status", VarStatus)
 
   evaluator.registerModule(nide)

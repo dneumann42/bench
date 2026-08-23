@@ -4,10 +4,12 @@ import nest
 
 type
   BufferID* = string
+  FileMode* = distinct string
   
   Buffer* = object
     id*: BufferID
     path*: string
+    fileMode*: FileMode
     name*: string
     editor*: EditorState
     savedText*: string

@@ -27,15 +27,47 @@ type
     label*: string
     commandID*: string
 
+  ToolbarControlKind* = enum
+    ToolbarMenuControl
+    ToolbarToolControl
+    ToolbarSpacerControl
+
+  ToolbarControl* = object
+    case kind*: ToolbarControlKind
+    of ToolbarMenuControl:
+      menu*: ToolbarMenu
+    of ToolbarToolControl:
+      tool*: ToolbarTool
+    of ToolbarSpacerControl:
+      spacerID*: string
+
   Toolbar* = object
     id*: string
     dock*: ToolbarDock
-    menus*: seq[ToolbarMenu]
-    tools*: seq[ToolbarTool]
+    controls*: seq[ToolbarControl]
     openMenu*: string
 
   Toolbars* = object
     bars*: seq[Toolbar]
+
+  StatusbarControlKind* = enum
+    StatusbarLabelControl
+    StatusbarButtonControl
+    StatusbarSpacerControl
+
+  StatusbarControl* = object
+    case kind*: StatusbarControlKind
+    of StatusbarLabelControl:
+      labelText*: string
+    of StatusbarButtonControl:
+      buttonID*: string
+      buttonLabel*: string
+      buttonCommandID*: string
+    of StatusbarSpacerControl:
+      statusbarSpacerID*: string
+
+  Statusbar* = object
+    controls*: seq[StatusbarControl]
 
   ToolbarEvent* {.variant.} = object
     toolbarID*: string
@@ -49,6 +81,10 @@ type
     of ToolClicked:
       toolID*: string
 
+  StatusbarEvent* = object
+    controlID*: string
+    commandID*: string
+
 proc toolbarMenuItem*(id, label: string, commandID = ""): ToolbarMenuItem =
   ToolbarMenuItem(id: id, label: label,
       commandID: if commandID.len > 0: commandID else: id)
@@ -60,6 +96,15 @@ proc toolbarMenu*(id, label: string,
 proc toolbarTool*(id, label: string, commandID = ""): ToolbarTool =
   ToolbarTool(id: id, label: label,
       commandID: if commandID.len > 0: commandID else: id)
+
+proc toolbarMenuControl*(menu: ToolbarMenu): ToolbarControl =
+  ToolbarControl(kind: ToolbarMenuControl, menu: menu)
+
+proc toolbarToolControl*(tool: ToolbarTool): ToolbarControl =
+  ToolbarControl(kind: ToolbarToolControl, tool: tool)
+
+proc toolbarSpacer*(id = ""): ToolbarControl =
+  ToolbarControl(kind: ToolbarSpacerControl, spacerID: id)
 
 proc toolbarDock*(name: string): ToolbarDock {.raises: [EvaluatorError].} =
   case name
@@ -78,10 +123,13 @@ proc isVertical*(dock: ToolbarDock): bool =
   dock in {LeftDock, RightDock}
 
 proc initToolbar*(id = "", dock = TopDock): Toolbar =
-  Toolbar(id: id, dock: dock, menus: @[], tools: @[], openMenu: "")
+  Toolbar(id: id, dock: dock, controls: @[], openMenu: "")
 
 proc initToolbars*(): Toolbars =
   Toolbars(bars: @[])
+
+proc initStatusbar*(): Statusbar =
+  Statusbar(controls: @[])
 
 proc addToolbar*(toolbars: var Toolbars, id: string, dock: ToolbarDock) =
   toolbars.bars.add initToolbar(id, dock)
@@ -93,23 +141,26 @@ proc toolbarView(toolbars: var Toolbars, id: string): var Toolbar =
   raise newException(EvaluatorError, "unknown toolbar: " & id)
 
 proc addMenu*(toolbar: var Toolbar, menu: ToolbarMenu) =
-  toolbar.menus.add menu
+  toolbar.controls.add toolbarMenuControl(menu)
 
 proc addMenu*(toolbar: var Toolbar, id, label: string,
     items: openArray[ToolbarMenuItem] = []) =
   toolbar.addMenu toolbarMenu(id, label, items)
 
 proc addItem*(toolbar: var Toolbar, menuID: string, item: ToolbarMenuItem) =
-  for menu in toolbar.menus.mitems:
-    if menu.id == menuID:
-      menu.items.add item
+  for control in toolbar.controls.mitems:
+    if control.kind == ToolbarMenuControl and control.menu.id == menuID:
+      control.menu.items.add item
       return
 
 proc addTool*(toolbar: var Toolbar, tool: ToolbarTool) =
-  toolbar.tools.add tool
+  toolbar.controls.add toolbarToolControl(tool)
 
 proc addTool*(toolbar: var Toolbar, id, label: string, commandID = "") =
   toolbar.addTool toolbarTool(id, label, commandID)
+
+proc addSpacer*(toolbar: var Toolbar, id = "") =
+  toolbar.controls.add toolbarSpacer(id)
 
 proc addMenu*(
     toolbars: var Toolbars, toolbarID, id, label: string,
@@ -126,6 +177,10 @@ proc addTool*(
     toolbars: var Toolbars, toolbarID, id, label: string, commandID = ""
 ) {.raises: [EvaluatorError].} =
   toolbars.toolbarView(toolbarID).addTool(id, label, commandID)
+
+proc addSpacer*(toolbars: var Toolbars, toolbarID: string, id = "") {.raises: [
+    EvaluatorError].} =
+  toolbars.toolbarView(toolbarID).addSpacer(id)
 
 proc expectArgumentCount(
     commandID: string, actual: int, expected: openArray[int]
@@ -205,6 +260,12 @@ proc readToolbarTool(value: Value): ToolbarTool {.raises: [EvaluatorError].} =
     value.textField("command", "toolbar tool"),
   )
 
+proc readToolbarSpacer(value: Value): ToolbarControl {.raises: [
+    EvaluatorError].} =
+  if value.textField("kind", "toolbar spacer") != "spacer":
+    raise newException(EvaluatorError, "expected toolbar spacer")
+  toolbarSpacer(value.textField("id", "toolbar spacer"))
+
 proc readToolbar*(value: Value): Toolbar {.raises: [EvaluatorError].} =
   if value.textField("kind", "toolbar") != "toolbar":
     raise newException(EvaluatorError, "expected toolbar")
@@ -219,6 +280,8 @@ proc readToolbar*(value: Value): Toolbar {.raises: [EvaluatorError].} =
       result.addMenu readToolbarMenu(child)
     of "tool":
       result.addTool readToolbarTool(child)
+    of "spacer":
+      result.controls.add readToolbarSpacer(child)
     else:
       raise newException(EvaluatorError, "unknown toolbar child: " & kind)
 
@@ -230,6 +293,43 @@ proc readToolbars*(env: Environment, name: string): Toolbars {.raises: [
   result = initToolbars()
   for toolbarValue in value.items:
     result.bars.add readToolbar(toolbarValue)
+
+proc statusbarLabel(value: string): StatusbarControl =
+  StatusbarControl(kind: StatusbarLabelControl, labelText: value)
+
+proc statusbarButton(id, label: string, commandID = ""): StatusbarControl =
+  StatusbarControl(kind: StatusbarButtonControl, buttonID: id,
+      buttonLabel: label, buttonCommandID: if commandID.len >
+      0: commandID else: id)
+
+proc statusbarSpacer(id = ""): StatusbarControl =
+  StatusbarControl(kind: StatusbarSpacerControl, statusbarSpacerID: id)
+
+proc readStatusbarControl(value: Value): StatusbarControl {.raises: [
+    EvaluatorError].} =
+  let kind = value.textField("kind", "statusbar control")
+  case kind
+  of "label":
+    statusbarLabel(value.textField("text", "statusbar label"))
+  of "button":
+    statusbarButton(
+      value.textField("id", "statusbar button"),
+      value.textField("label", "statusbar button"),
+      value.textField("command", "statusbar button"),
+    )
+  of "spacer":
+    statusbarSpacer(value.textField("id", "statusbar spacer"))
+  else:
+    raise newException(EvaluatorError, "unknown statusbar control: " & kind)
+
+proc readStatusbar*(env: Environment, name: string): Statusbar {.raises: [
+    EvaluatorError].} =
+  let value = env.get(name)
+  if value.kind != List:
+    raise newException(EvaluatorError, name & " must be a list")
+  result = initStatusbar()
+  for controlValue in value.items:
+    result.controls.add readStatusbarControl(controlValue)
 
 proc registerToolbarBuilderCommands*(evaluator: var Evaluator) =
   var module = nativeModule"nide/toolbar"
@@ -290,57 +390,117 @@ proc registerToolbarBuilderCommands*(evaluator: var Evaluator) =
       )),
     ])
 
+  module.native "spacer":
+    discard layout
+    discard bodyNodes
+    expectArgumentCount("spacer", arguments.len, [0, 1])
+    toolbarValue("spacer", [
+      ("id", text(
+        if arguments.len == 1:
+          env.evalTextArgument(arguments, 0, "spacer")
+        else:
+          ""
+      )),
+    ])
+
+  module.native "statusbar":
+    discard layout
+    expectArgumentCount("statusbar", arguments.len, [0])
+    result = evalBodyList(env, bodyNodes)
+    env.set("nide-statusbar", result)
+
+  module.native "label":
+    discard layout
+    discard bodyNodes
+    expectArgumentCount("label", arguments.len, [1])
+    let value = env.eval(arguments[0])
+    if value.kind != Text:
+      raise newException(EvaluatorError, "label expects text")
+    toolbarValue("label", [
+      ("text", value),
+    ])
+
+  module.native "button":
+    discard layout
+    discard bodyNodes
+    expectArgumentCount("button", arguments.len, [2, 3])
+    let id = env.evalTextArgument(arguments, 0, "button")
+    toolbarValue("button", [
+      ("id", text(id)),
+      ("label", text(env.evalTextArgument(arguments, 1, "button"))),
+      ("command", text(
+        if arguments.len == 3:
+          env.evalTextArgument(arguments, 2, "button")
+        else:
+          id
+      )),
+    ])
+
   evaluator.registerModule(module)
 
 widget toolbar*(model: var Toolbar)emits ToolbarEvent:
   let vertical = model.dock.isVertical()
+  var spacerIndex = model.controls.len
+  for index, control in model.controls:
+    if control.kind == ToolbarSpacerControl:
+      spacerIndex = index
+      break
+
+  template renderControl(index: int) =
+    let control = model.controls[index]
+    case control.kind
+    of ToolbarMenuControl:
+      let menu = control.menu
+      if ui.menu(ui.id("menu", model.id, menu.id), menu.label):
+        ui.events:
+          model.openMenu = if model.openMenu == menu.id: "" else: menu.id
+        emit ToolbarEvent(kind: MenuClicked, toolbarID: model.id,
+            clickedMenuID: menu.id)
+    of ToolbarToolControl:
+      let tool = control.tool
+      if ui.button(ui.id("tool", model.id, tool.id), tool.label):
+        emit ToolbarEvent(kind: ToolClicked, toolbarID: model.id,
+            toolID: tool.id, commandID: tool.commandID)
+    of ToolbarSpacerControl:
+      discard
+
   if vertical:
     ui.column(ui.id("root", model.id), cfg(width = fit(), height = fill(),
         gap = 6, alignItems = AlignCenter)):
-      for menu in model.menus:
-        if ui.menu(ui.id("menu", model.id, menu.id), menu.label):
-          ui.events:
-            model.openMenu = if model.openMenu == menu.id: "" else: menu.id
-          emit ToolbarEvent(kind: MenuClicked, toolbarID: model.id,
-              clickedMenuID: menu.id)
-      ui.spacer(ui.id("spacer", model.id), width = fixed(1), height = fill())
-      ui.column(ui.id("tools", model.id), cfg(width = fit(), height = fit(),
-          gap = 8, alignItems = AlignCenter)):
-        for tool in model.tools:
-          if ui.button(ui.id("tool", model.id, tool.id), tool.label):
-            emit ToolbarEvent(kind: ToolClicked, toolbarID: model.id,
-                toolID: tool.id, commandID: tool.commandID)
+      for index in 0 ..< spacerIndex:
+        renderControl(index)
+      if spacerIndex < model.controls.len:
+        ui.spacer(ui.id("spacer", model.id), width = fixed(1), height = fill())
+        for index in (spacerIndex + 1) ..< model.controls.len:
+          renderControl(index)
   else:
     ui.menuBar(ui.id("root", model.id), cfg(width = fill(), height = fit(),
         gap = 2, alignItems = AlignCenter)):
-      for menu in model.menus:
-        if ui.menu(ui.id("menu", model.id, menu.id), menu.label):
-          ui.events:
-            model.openMenu = if model.openMenu == menu.id: "" else: menu.id
-          emit ToolbarEvent(kind: MenuClicked, toolbarID: model.id,
-              clickedMenuID: menu.id)
-      ui.spacer(ui.id("spacer", model.id), width = fill(), height = fixed(1))
-      ui.row(ui.id("tools", model.id), cfg(width = fit(), height = fit(),
-          gap = 8, alignItems = AlignCenter)):
-        for tool in model.tools:
-          if ui.button(ui.id("tool", model.id, tool.id), tool.label):
-            emit ToolbarEvent(kind: ToolClicked, toolbarID: model.id,
-                toolID: tool.id, commandID: tool.commandID)
+      for index in 0 ..< spacerIndex:
+        renderControl(index)
+      if spacerIndex < model.controls.len:
+        ui.spacer(ui.id("spacer", model.id), width = fill(), height = fixed(1))
+        for index in (spacerIndex + 1) ..< model.controls.len:
+          renderControl(index)
 
-  for menu in model.menus:
-    if model.openMenu == menu.id:
-      ui.floatingCardBelow(ui.id("popover", model.id, menu.id),
-          ui.id("menu", model.id, menu.id), cfg(width = fixed(180),
-          height = fit(), padding = 4, gap = 2)):
-        for item in menu.items:
-          ui.menuItem(ui.id("item", model.id, menu.id, item.id),
-              cfg(width = fill(), height = fit())):
-            ui.label(ui.id("itemText", model.id, menu.id, item.id), item.label)
-          if ui.clicked(ui.id("item", model.id, menu.id, item.id)):
-            ui.events:
-              model.openMenu = ""
-            emit ToolbarEvent(kind: MenuItemClicked, toolbarID: model.id,
-                itemMenuID: menu.id, itemID: item.id, commandID: item.commandID)
+  for control in model.controls:
+    if control.kind == ToolbarMenuControl:
+      let menu = control.menu
+      if model.openMenu == menu.id:
+        ui.floatingCardBelow(ui.id("popover", model.id, menu.id),
+            ui.id("menu", model.id, menu.id), cfg(width = fixed(180),
+            height = fit(), padding = 4, gap = 2)):
+          for item in menu.items:
+            ui.menuItem(ui.id("item", model.id, menu.id, item.id),
+                cfg(width = fill(), height = fit())):
+              ui.label(ui.id("itemText", model.id, menu.id, item.id),
+                  item.label)
+            if ui.clicked(ui.id("item", model.id, menu.id, item.id)):
+              ui.events:
+                model.openMenu = ""
+              emit ToolbarEvent(kind: MenuItemClicked, toolbarID: model.id,
+                  itemMenuID: menu.id, itemID: item.id,
+                  commandID: item.commandID)
 
 widget toolbarDock*(model: var Toolbars, dock: ToolbarDock)emits ToolbarEvent:
   let vertical = dock.isVertical()
@@ -351,18 +511,47 @@ widget toolbarDock*(model: var Toolbars, dock: ToolbarDock)emits ToolbarEvent:
         found = true
         break
     found
-  if hasBars:
-    if vertical:
-      ui.row(ui.id("dock", $dock), cfg(width = fit(), height = fill(), gap = 0,
-          alignSelf = AlignStretch)):
-        for index in 0 ..< model.bars.len:
-          if model.bars[index].dock == dock:
-            for event in ui.toolbar(model.bars[index]):
-              emit event
-    else:
-      ui.column(ui.id("dock", $dock), cfg(width = fill(), height = fit(),
-          gap = 0)):
-        for index in 0 ..< model.bars.len:
-          if model.bars[index].dock == dock:
-            for event in ui.toolbar(model.bars[index]):
-              emit event
+
+  if hasBars and vertical:
+    ui.row(ui.id("dock", $dock), cfg(width = fit(), height = fill(), gap = 0,
+        alignSelf = AlignStretch)):
+      for index in 0 ..< model.bars.len:
+        if model.bars[index].dock == dock:
+          for event in ui.toolbar(model.bars[index]):
+            emit event
+  elif hasBars:
+    ui.column(ui.id("dock", $dock), cfg(width = fill(), height = fit(),
+        gap = 0)):
+      for index in 0 ..< model.bars.len:
+        if model.bars[index].dock == dock:
+          for event in ui.toolbar(model.bars[index]):
+            emit event
+
+widget statusbar*(model: var Statusbar)emits StatusbarEvent:
+  var spacerIndex = model.controls.len
+  for index, control in model.controls:
+    if control.kind == StatusbarSpacerControl:
+      spacerIndex = index
+      break
+
+  template renderControl(index: int) =
+    let control = model.controls[index]
+    case control.kind
+    of StatusbarLabelControl:
+      ui.label(ui.id("statusbarLabel", index), control.labelText)
+    of StatusbarButtonControl:
+      if ui.button(ui.id("statusbarButton", control.buttonID),
+          control.buttonLabel):
+        emit StatusbarEvent(controlID: control.buttonID,
+            commandID: control.buttonCommandID)
+    of StatusbarSpacerControl:
+      discard
+
+  ui.row(ui.id("statusbar"), cfg(width = fill(), height = fit(), gap = 8,
+      alignItems = AlignCenter)):
+    for index in 0 ..< spacerIndex:
+      renderControl(index)
+    if spacerIndex < model.controls.len:
+      ui.spacer(ui.id("statusbarSpacer"), width = fill(), height = fixed(1))
+      for index in (spacerIndex + 1) ..< model.controls.len:
+        renderControl(index)

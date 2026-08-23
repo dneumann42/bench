@@ -1,5 +1,8 @@
 use nide/toolbar:
-  include toolbars toolbar menu item tool
+  include toolbars toolbar menu item tool spacer statusbar label button
+
+use nide:
+  include get-status
 
 toolbars:
   toolbar "main" "top":
@@ -16,6 +19,8 @@ toolbars:
       item "project.build" "Build" "project-build"
       item "project.settings" "Project Settings" "project-settings"
 
+    spacer
+    
     tool "build" "Build" "project-build"
     tool "run" "Run" "project-run"
 
@@ -23,3 +28,11 @@ toolbars:
     tool "splitColumn" "=" "pane-split-column"
     tool "splitRow" "%" "pane-split-row"
     tool "unsplit" "x" "pane-unsplit"
+
+statusbar:
+  label (get-status)
+
+  spacer
+
+  button "" "Hello, World!":
+     nothing
