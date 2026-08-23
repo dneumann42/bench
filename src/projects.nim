@@ -24,7 +24,7 @@ type
   ProjectManager* = object
     projects: seq[Project]
     activeProject: string
-    
+
 const InvalidProjectName* = ""
 
 proc init*(T: typedesc[ProjectManager]): T =
@@ -32,6 +32,12 @@ proc init*(T: typedesc[ProjectManager]): T =
 
 proc activeProjectName*(pm: ProjectManager): string =
   pm.activeProject
+
+proc activeProjectPath*(pm: ProjectManager): string =
+  for project in pm.projects:
+    if project.name == pm.activeProject:
+      return project.directoryPath
+  ""
 
 proc projects*(pm: ProjectManager): seq[Project] =
   pm.projects
@@ -101,7 +107,7 @@ proc write*(stream: Stream, pm: ProjectManager) =
   var owlCode = pm.toOwl()
   stream.write(owlCode)
   stream.writeLine()
-  
+
 proc read*(stream: Stream, T: typedesc[ProjectManager]): T =
   let loaded = loadOwlSource(stream.readAll(), mode = restrictedOwlData)
   if loaded.kind == List and loaded.items.len > 0:

@@ -1,6 +1,6 @@
 # Low-level native bindings and environment helpers for Nide's Owl command layer.
 
-import std/[os, sets, strutils, tables, sugar]
+import std/[algorithm, os, sets, strutils, tables, sugar]
 import owl
 
 const
@@ -9,6 +9,7 @@ const
   ActionSaveFileAsDialog* = "save-file-as-dialog"
   ActionMarkBufferSaved* = "mark-buffer-saved"
   ActionToggleProjectsPanel* = "toggle-projects-panel"
+  ActionToggleFileExplorerPanel* = "toggle-file-explorer-panel"
 
   VarState* = "nide-state"
   VarRequestedActions* = "nide-requested-actions"
@@ -49,6 +50,12 @@ proc drainRequests*(bridge: NideOwlBridge): seq[NideBridgeRequest] =
 
 proc textList*(items: openArray[string]): Value =
   list(collect(for item in items: text(item)))
+
+proc dictionaryValue(fields: openArray[(string, Value)]): Value =
+  var entries = initTable[string, Value]()
+  for (key, value) in fields:
+    entries[key] = value
+  dictionary(entries)
 
 proc bindvalue*(env: Environment, name: string, value: Value) =
   env.define(name, value)
@@ -185,6 +192,278 @@ proc defineTextContains(module: var NativeModule) =
     boolean(needle.len == 0 or haystack.contains(needle))
   )
 
+proc evalTextArgument(env: Environment, arguments: seq[SyntaxNode], index: int,
+    commandID: string): string {.raises: [EvaluatorError].} =
+  if index >= arguments.len:
+    raise newException(EvaluatorError, commandID & " missing argument")
+  let value = env.eval(arguments[index])
+  if value.kind != Text:
+    raise newException(EvaluatorError, commandID & " expects text")
+  value.text
+
+proc evalBoolArgument(env: Environment, arguments: seq[SyntaxNode], index: int,
+    commandID: string): bool {.raises: [EvaluatorError].} =
+  if index >= arguments.len:
+    raise newException(EvaluatorError, commandID & " missing argument")
+  env.eval(arguments[index]).isTruthy
+
+proc evalTextListArgument(env: Environment, arguments: seq[SyntaxNode],
+    index: int, commandID: string): seq[string] {.raises: [EvaluatorError].} =
+  if index >= arguments.len:
+    raise newException(EvaluatorError, commandID & " missing argument")
+  let value = env.eval(arguments[index])
+  if value.kind != List:
+    raise newException(EvaluatorError, commandID & " expects a list")
+  for item in value.items:
+    if item.kind == Text:
+      result.add item.text
+
+proc textListContains(items: openArray[string], target: string): bool =
+  for item in items:
+    if item == target:
+      return true
+
+proc detectFileIconMode(): string {.raises: [].} =
+  for directory in [
+    getHomeDir() / ".local" / "share" / "fonts",
+    getHomeDir() / ".fonts",
+    "/usr/local/share/fonts",
+    "/usr/share/fonts",
+  ]:
+    if not dirExists(directory):
+      continue
+    try:
+      for path in walkDirRec(directory):
+        let name = path.extractFilename.toLowerAscii()
+        if name.endsWith(".ttf") or name.endsWith(".otf") or name.endsWith(".ttc"):
+          if "nerdfont" in name or "nerd font" in name or " nf " in name or
+              "nf-" in name:
+            return "nerd"
+    except CatchableError:
+      discard
+  "unicode"
+
+proc fileIcon(name: string, isDir: bool, mode: string): string =
+  if mode == "nerd":
+    if isDir:
+      return ""
+    let ext = name.splitFile.ext.toLowerAscii()
+    case ext
+    of ".nim": ""
+    of ".nims", ".nimble": ""
+    of ".owl": "󰈙"
+    of ".md", ".org", ".txt": "󰈙"
+    of ".json", ".lock": ""
+    of ".c", ".h": ""
+    of ".cpp", ".hpp", ".cc": ""
+    of ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp": "󰋩"
+    of ".ttf", ".otf": ""
+    of ".sh", ".bash": ""
+    else: "󰈔"
+  elif mode == "unicode":
+    if isDir: "▣" else: "□"
+  else:
+    if isDir: "[D]" else: "[F]"
+
+proc hasVisibleChild(path: string, showHidden, showDirs,
+    showFiles: bool): bool =
+  try:
+    for kind, child in walkDir(path, relative = false):
+      let name = child.extractFilename
+      if not showHidden and name.startsWith("."):
+        continue
+      if kind == pcDir and showDirs:
+        return true
+      if kind == pcFile and showFiles:
+        return true
+  except CatchableError:
+    discard
+
+proc sortedDirEntries(path, sortMode: string, showHidden, showDirs,
+    showFiles: bool): seq[tuple[path, name: string, isDir: bool]] =
+  try:
+    for kind, child in walkDir(path, relative = false):
+      let
+        name = child.extractFilename
+        isDir = kind == pcDir
+      if kind notin {pcDir, pcFile}:
+        continue
+      if not showHidden and name.startsWith("."):
+        continue
+      if isDir and not showDirs:
+        continue
+      if (not isDir) and not showFiles:
+        continue
+      result.add((child, name, isDir))
+  except CatchableError:
+    return
+  result.sort(proc(a, b: tuple[path, name: string, isDir: bool]): int =
+    if a.isDir != b.isDir:
+      return if a.isDir: -1 else: 1
+    case sortMode
+    of "extension":
+      result = cmp(a.name.splitFile.ext.toLowerAscii(),
+          b.name.splitFile.ext.toLowerAscii())
+      if result != 0:
+        return
+    of "kind":
+      result = cmp($a.isDir, $b.isDir)
+      if result != 0:
+        return
+    else:
+      discard
+    cmp(a.name.toLowerAscii(), b.name.toLowerAscii())
+  )
+
+proc addFileTreeRows(rows: var seq[Value], path: string, depth: int,
+    expanded: HashSet[string], selectedPath, query, sortMode, iconMode: string,
+    showHidden, showDirs, showFiles: bool, remaining: var int): bool =
+  if remaining <= 0:
+    return false
+  let queryLower = query.toLowerAscii()
+  var matchedAny = false
+  for entry in sortedDirEntries(path, sortMode, showHidden, showDirs, showFiles):
+    if remaining <= 0:
+      break
+    let
+      childExpanded = entry.path in expanded
+      hasChildren = entry.isDir and hasVisibleChild(entry.path, showHidden,
+          showDirs, showFiles)
+      selfMatches = queryLower.len == 0 or entry.name.toLowerAscii().contains(
+          queryLower) or
+        entry.path.toLowerAscii().contains(queryLower)
+    var childRows: seq[Value]
+    var childMatches = false
+    if entry.isDir and (childExpanded or queryLower.len > 0):
+      childMatches = addFileTreeRows(childRows, entry.path, depth + 1,
+          expanded, selectedPath, query, sortMode, iconMode, showHidden,
+          showDirs, showFiles, remaining)
+    if queryLower.len == 0 or selfMatches or childMatches:
+      matchedAny = true
+      rows.add dictionaryValue([
+        ("path", text(entry.path)),
+        ("name", text(entry.name)),
+        ("kind", text(if entry.isDir: "directory" else: "file")),
+        ("isDir", boolean(entry.isDir)),
+        ("depth", number(depth.float64)),
+        ("expanded", boolean(childExpanded)),
+        ("hasChildren", boolean(hasChildren)),
+        ("selected", boolean(entry.path == selectedPath)),
+        ("icon", text(fileIcon(entry.name, entry.isDir, iconMode))),
+      ])
+      dec remaining
+      if childExpanded or queryLower.len > 0:
+        rows.add childRows
+  matchedAny
+
+proc defineFileExplorerCommands(module: var NativeModule,
+    bridge: NideOwlBridge) =
+  module.defineNative("file-icon-mode", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard env
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "file-icon-mode expects no arguments")
+    text(detectFileIconMode())
+  )
+
+  module.defineNative("text-list-contains?", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 2:
+      raise newException(EvaluatorError, "text-list-contains? expects list and text")
+    let items = env.evalTextListArgument(arguments, 0, "text-list-contains?")
+    let target = env.evalTextArgument(arguments, 1, "text-list-contains?")
+    boolean(items.textListContains(target))
+  )
+
+  module.defineNative("text-list-toggle", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 2:
+      raise newException(EvaluatorError, "text-list-toggle expects list and text")
+    var items = env.evalTextListArgument(arguments, 0, "text-list-toggle")
+    let target = env.evalTextArgument(arguments, 1, "text-list-toggle")
+    var output: seq[string]
+    var removed = false
+    for item in items:
+      if item == target:
+        removed = true
+      else:
+        output.add item
+    if not removed:
+      output.add target
+    textList(output)
+  )
+
+  module.defineNative("file-tree-visible", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 7:
+      raise newException(EvaluatorError,
+          "file-tree-visible expects root, expanded, selected, query, sort, show-hidden, filter")
+    let
+      root = env.evalTextArgument(arguments, 0,
+          "file-tree-visible").expandTilde()
+      expandedList = env.evalTextListArgument(arguments, 1, "file-tree-visible")
+      selectedPath = env.evalTextArgument(arguments, 2, "file-tree-visible")
+      query = env.evalTextArgument(arguments, 3, "file-tree-visible")
+      sortMode = env.evalTextArgument(arguments, 4, "file-tree-visible")
+      showHidden = env.evalBoolArgument(arguments, 5, "file-tree-visible")
+      filterMode = env.evalTextArgument(arguments, 6, "file-tree-visible")
+      showDirs = filterMode != "files"
+      showFiles = filterMode != "directories"
+      iconMode = detectFileIconMode()
+    var expanded = initHashSet[string]()
+    for item in expandedList:
+      expanded.incl item.expandTilde()
+    var rows: seq[Value]
+    var remaining = 1200
+    discard addFileTreeRows(rows, root, 0, expanded, selectedPath, query,
+        sortMode, iconMode, showHidden, showDirs, showFiles, remaining)
+    list(rows)
+  )
+
+  module.defineNative("file-explorer-event", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len < 1 or arguments.len > 2:
+      raise newException(EvaluatorError, "file-explorer-event expects action and optional path")
+    let action = env.evalTextArgument(arguments, 0, "file-explorer-event")
+    let target =
+      if arguments.len == 2:
+        env.eval(arguments[1])
+      else:
+        text("")
+    bridge.request("file-explorer." & action, [target])
+    boolean(true)
+  )
+
 proc defineStringCommand(module: var NativeModule) =
   module.defineNative("string", proc(
       env: Environment,
@@ -221,8 +500,10 @@ proc defineBridgeGetter(module: var NativeModule, commandID, getterName: string,
     bridge.bridgeGet(getterName)
   )
 
-proc defineBridgeRequest(module: var NativeModule, commandID, requestName: string,
-    bridge: NideOwlBridge, expectedArgumentCounts: openArray[int]) =
+proc defineBridgeRequest(module: var NativeModule, commandID,
+    requestName: string,
+
+bridge: NideOwlBridge, expectedArgumentCounts: openArray[int]) =
   let counts = @expectedArgumentCounts
   module.defineNative(commandID, proc(
       env: Environment,
@@ -401,16 +682,22 @@ proc registerInternalCommands*(evaluator: var Evaluator,
   nide.defineBridgeGetter("get-project-manager", "project-manager", bridge)
   nide.defineBridgeGetter("get-projects", "projects", bridge)
   nide.defineBridgeGetter("get-active-project", "active-project", bridge)
+  nide.defineBridgeGetter("get-active-project-path", "active-project-path", bridge)
+  nide.defineBridgeGetter("get-home-directory", "home-directory", bridge)
+  nide.defineBridgeGetter("get-panels", "panels", bridge)
   nide.defineBridgeGetter("auto-track-opened-projects",
       "auto-track-opened-projects", bridge)
   nide.defineBridgeRequest("open-project", "project.open", bridge, [1])
-  nide.defineBridgeRequest("pick-project-directory", "project.pick-directory", bridge, [0])
+  nide.defineBridgeRequest("pick-project-directory", "project.pick-directory",
+      bridge, [0])
   nide.defineBridgeRequest("add-project", "project.add", bridge, [2])
   nide.defineBridgeRequest("unload-project", "project.unload", bridge, [0])
   nide.defineBridgeRequest("reload-projects", "projects.reload", bridge, [0])
   nide.defineBridgeRequest("save-projects", "projects.save", bridge, [0])
   nide.defineBridgeRequest("set-nide-status", "status.set", bridge, [1])
+  nide.defineBridgeRequest("toggle-panel", "panel.toggle", bridge, [1])
   nide.defineFileSystemCommands()
+  nide.defineFileExplorerCommands(bridge)
   nide.defineStringCommand()
   nide.defineTextContains()
 

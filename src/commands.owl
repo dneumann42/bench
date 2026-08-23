@@ -1,5 +1,5 @@
 use nide:
-  include add-project auto-track-opened-projects directory-files dir-exists? file-exists? get-projects open-project path-base-name path-join path-normalize path-parent path-stem pick-project-directory request-action save-projects set-nide-status set-status string text-contains version
+  include add-project auto-track-opened-projects directory-files dir-exists? file-exists? get-projects open-project path-base-name path-join path-normalize path-parent path-stem pick-project-directory request-action save-projects set-nide-status set-status string text-contains toggle-panel version
 
 fun file-new:
   request-action "new-file"
@@ -131,4 +131,10 @@ fun project-settings:
   set-status "Project settings are not implemented"
 
 fun toggle-projects-panel:
-  request-action "toggle-projects-panel"
+  toggle-panel "projects"
+
+fun toggle-file-explorer-panel:
+  toggle-panel "files"
+
+fun toggle-panel-by-id panelID:
+  toggle-panel panelID

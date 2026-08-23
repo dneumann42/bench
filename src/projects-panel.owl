@@ -1,5 +1,5 @@
 use nide:
-  include get-active-project get-projects open-project unload-project reload-projects save-projects text-contains
+  include get-active-project get-projects open-project unload-project reload-projects save-projects string text-contains
 
 state "projects-panel":
   searchID = (id "projects" "search")

@@ -1,0 +1,157 @@
+import "../../nest/lib/components/tree.owl"
+
+use nide:
+  include file-explorer-event file-tree-visible get-active-project-path get-home-directory set-nide-status string text-list-toggle
+
+state "file-explorer-panel":
+  searchID = (id "file-explorer" "search")
+  expandedPaths = []
+  selectedPath = ""
+  sortMode = "name"
+  filterMode = "all"
+  showHidden = false
+
+fun file-explorer-root:
+  define:
+    projectPath = (get-active-project-path)
+  if (= projectPath ""):
+    get-home-directory
+  else:
+    projectPath
+
+fun next-sort-mode mode:
+  cond:
+    when (= mode "name"):
+      "extension"
+    when (= mode "extension"):
+      "kind"
+    when true:
+      "name"
+
+fun next-filter-mode mode:
+  cond:
+    when (= mode "all"):
+      "files"
+    when (= mode "files"):
+      "directories"
+    when true:
+      "all"
+
+fun file-explorer-row item:
+  define:
+    rowID = (tree-node-row-id "file-explorer" item.path)
+    openID = (tree-node-open-id "file-explorer" item.path)
+  tree-row "file-explorer" item:
+    row openID:
+      width = fill
+      height = fit
+      gap = 6
+      alignItems = AlignCenter
+      label (id rowID "icon") item.icon:
+        width = fixed 24
+        height = fit
+        fontName = "editor"
+      label (id rowID "label") item.name:
+        width = fill
+        height = fit
+        textScroll = true
+  tooltip openID item.path
+
+widget file-explorer-panel:
+  define:
+    rootPath = (file-explorer-root)
+    query = (editorText searchID)
+    rows = (file-tree-visible rootPath expandedPaths selectedPath query sortMode showHidden filterMode)
+    refreshID = (id "file-explorer" "refresh")
+    hiddenID = (id "file-explorer" "hidden")
+    sortID = (id "file-explorer" "sort")
+    filterID = (id "file-explorer" "filter")
+
+  events:
+    when (clicked refreshID):
+      file-explorer-event "refresh" rootPath
+      set-nide-status (string "Refreshed " rootPath)
+    when (clicked hiddenID):
+      set showHidden (not showHidden)
+      file-explorer-event "hidden" (pick showHidden "false" "true")
+    when (clicked sortID):
+      set sortMode (next-sort-mode sortMode)
+      file-explorer-event "sort" sortMode
+    when (clicked filterID):
+      set filterMode (next-filter-mode filterMode)
+      file-explorer-event "filter" filterMode
+    when (submitted searchID):
+      file-explorer-event "search" query
+    for item (iter rows):
+      when (clicked (tree-node-toggle-id "file-explorer" item.path)):
+        set expandedPaths (text-list-toggle expandedPaths item.path)
+        file-explorer-event "toggle" item.path
+      when (clicked (tree-node-open-id "file-explorer" item.path)):
+        set selectedPath item.path
+        file-explorer-event "select" item.path
+        when item.isDir:
+          set expandedPaths (text-list-toggle expandedPaths item.path)
+          file-explorer-event "toggle" item.path
+        when (not item.isDir):
+          file-explorer-event "open" item.path
+
+  panel (id "file-explorer" "panel"):
+    width = fixed 320
+    height = fill
+    padding = 8
+    gap = 8
+    alignItems = AlignStretch
+    background = color 23 27 31
+    column (id "file-explorer" "header"):
+      width = fill
+      height = fit
+      gap = 6
+      alignItems = AlignStretch
+      label (id "file-explorer" "title") "Files":
+        width = fill
+        height = fit
+      label (id "file-explorer" "root") rootPath:
+        width = fill
+        height = fit
+        textScroll = true
+      lineInput searchID "":
+        width = fill
+        height = fixed 30
+      row (id "file-explorer" "tools"):
+        width = fill
+        height = fit
+        gap = 6
+        button refreshID "↻":
+          width = fixed 36
+          height = fit
+          fontName = "editor"
+          buttonPadding = 0
+        tooltip refreshID "Refresh"
+        button sortID (string "Sort: " sortMode):
+          width = fill
+          height = fit
+          textScroll = true
+        button filterID (string "Show: " filterMode):
+          width = fill
+          height = fit
+          textScroll = true
+      row (id "file-explorer" "filters"):
+        width = fill
+        height = fit
+        gap = 6
+        button hiddenID (pick showHidden "Hidden: on" "Hidden: off"):
+          width = fill
+          height = fit
+
+    column (id "file-explorer" "tree"):
+      width = fill
+      height = fill
+      gap = 1
+      scrollX = true
+      scrollY = true
+      alignItems = AlignStretch
+      if (empty? rows):
+        tree-empty "file-explorer" "No files"
+      else:
+        for item (iter rows):
+          file-explorer-row item

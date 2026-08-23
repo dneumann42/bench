@@ -1,6 +1,9 @@
 use nide/toolbar:
   include set-toolbars toolbar-value menu-value item-value tool-value spacer-value statusbar
 
+use nide/panels:
+  include set-panels panel-value
+
 use nide:
   include get-status
 
@@ -9,6 +12,12 @@ block-command toolbars:
 
 block-command toolbar id dock:
   toolbar-value (eval id) (eval dock) (list-from (statements block))
+
+block-command panels:
+  set-panels (list-from (statements block))
+
+fun dock-panel id title dock source widget open size:
+  panel-value id title dock source widget open size
 
 block-command toolbar-menu id label:
   menu-value (eval id) (eval label) (list-from (statements block))
@@ -47,17 +56,24 @@ toolbars:
 
   toolbar "pane-tools" "left":
     toolbar-tool "toggleProjectsPanel" "P" "toggle-projects-panel"
+    toolbar-tool "toggleFileExplorerPanel" "E" "toggle-file-explorer-panel"
     toolbar-spacer
     toolbar-tool "splitColumn" "=" "pane-split-column"
     toolbar-tool "splitRow" "%" "pane-split-row"
     toolbar-tool "unsplit" "x" "pane-unsplit"
+
+panels:
+  dock-panel "projects" "Projects" "left" "projects-panel.owl" "projects-panel" false 280
+  dock-panel "files" "Files" "left" "file-explorer-panel.owl" "file-explorer-panel" false 320
 
 statusbar:
   label (id "statusbar" "status") (get-status):
     width = fill
     height = fit
 
-  spacer
+  spacer (id "statusbar" "spacer"):
+    width = fill
+    height = fixed 1
 
   button (id "statusbar" "hello-world") "Hello, World!":
     nothing
