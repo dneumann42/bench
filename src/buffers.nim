@@ -35,6 +35,23 @@ proc init*(T: typedesc[BufferManager]): T =
 proc hasBuffer*(manager: BufferManager, id: BufferID): bool =
   id != InvalidBufferID and manager.buffers.hasKey(id)
 
+proc pathKey(path: string): string =
+  if path.len == 0:
+    return ""
+  try:
+    path.absolutePath.normalizedPath
+  except CatchableError:
+    path.normalizedPath
+
+proc findByPath*(manager: BufferManager, path: string): BufferID =
+  let target = path.pathKey()
+  if target.len == 0:
+    return InvalidBufferID
+  for id, buffer in manager.buffers.pairs:
+    if buffer.path.pathKey() == target:
+      return id
+  InvalidBufferID
+
 proc scratchName(manager: BufferManager): string =
   "Untitled " & $manager.nextScratch
 

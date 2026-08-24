@@ -194,10 +194,18 @@ proc requestSaveFile(model: var Nide) =
 proc runBufferHook(model: var Nide, id: BufferID, hook: string)
 proc applyFileMode(model: var Nide, id: BufferID)
 
+proc dropBufferIfUnreferenced(model: var Nide, id: BufferID) =
+  if model.buffers.hasBuffer(id) and model.panes.bufferReferenceCount(id) == 0:
+    model.buffers.buffers.del(id)
+
 proc newFile(model: var Nide) =
   let id = model.activeBufferID()
-  model.runBufferHook(id, "onunload")
-  model.buffers.replaceWithScratch(id)
+  if model.panes.bufferReferenceCount(id) > 1:
+    let newID = model.buffers.newScratchBuffer()
+    model.panes.setActiveBuffer(newID)
+  else:
+    model.runBufferHook(id, "onunload")
+    model.buffers.replaceWithScratch(id)
   model.status = "New file"
 
 proc openFile(model: var Nide, path: string) =
@@ -206,6 +214,20 @@ proc openFile(model: var Nide, path: string) =
     model.status = "Open failed: no focused editor pane"
     return
   try:
+    let existingID = model.buffers.findByPath(path)
+    if existingID != InvalidBufferID and existingID != id:
+      if model.panes.bufferReferenceCount(id) <= 1:
+        model.runBufferHook(id, "onunload")
+      model.panes.setActiveBuffer(existingID)
+      model.dropBufferIfUnreferenced(id)
+      model.status = "Opened " & path
+      return
+    if existingID == InvalidBufferID and model.panes.bufferReferenceCount(id) > 1:
+      let newID = model.buffers.openBuffer(path)
+      model.panes.setActiveBuffer(newID)
+      model.applyFileMode(newID)
+      model.status = "Opened " & path
+      return
     model.runBufferHook(id, "onunload")
     model.buffers.replaceWithFile(id, path)
     model.applyFileMode(id)
@@ -216,6 +238,19 @@ proc openFile(model: var Nide, path: string) =
 proc saveFileAs(model: var Nide, path: string) =
   let id = model.activeBufferID()
   try:
+    let existingID = model.buffers.findByPath(path)
+    if existingID != InvalidBufferID and existingID != id and
+        model.buffers.hasBuffer(id):
+      let content = model.buffers.buffers[id].editor.text
+      writeFile(path, content)
+      if model.panes.bufferReferenceCount(id) <= 1:
+        model.runBufferHook(id, "onunload")
+      model.buffers.buffers[existingID].editor.replaceText(content)
+      model.buffers.buffers[existingID].savedText = content
+      model.panes.setActiveBuffer(existingID)
+      model.dropBufferIfUnreferenced(id)
+      model.status = "Saved " & path
+      return
     model.runBufferHook(id, "onunload")
     model.buffers.saveBufferAs(id, path)
     model.applyFileMode(id)
@@ -243,7 +278,8 @@ proc unsplitPane(model: var Nide) =
   if bufferID == InvalidBufferID:
     model.status = "Cannot unsplit the last pane"
     return
-  if model.buffers.hasBuffer(bufferID):
+  if model.buffers.hasBuffer(bufferID) and
+      model.panes.bufferReferenceCount(bufferID) == 0:
     model.runBufferHook(bufferID, "onunload")
     model.buffers.buffers.del(bufferID)
   model.status = "Unsplit pane"

@@ -113,6 +113,19 @@ proc activeBufferID*(paneManager: PaneManager): BufferID =
     return InvalidBufferID
   paneManager.panes[paneManager.activePane].bufferID
 
+proc setActiveBuffer*(paneManager: var PaneManager, bufferID: BufferID) =
+  if paneManager.activePane != InvalidPaneID and
+      paneManager.activePane in paneManager.panes and
+      paneManager.panes[paneManager.activePane].isLeaf:
+    paneManager.panes[paneManager.activePane].bufferID = bufferID
+
+proc bufferReferenceCount*(paneManager: PaneManager, bufferID: BufferID): int =
+  if bufferID == InvalidBufferID:
+    return 0
+  for pane in paneManager.panes.values:
+    if pane.isLeaf and pane.bufferID == bufferID:
+      inc result
+
 proc focus*(paneManager: var PaneManager, paneID: PaneID) =
   if paneID in paneManager.panes and paneManager.panes[paneID].isLeaf:
     paneManager.activePane = paneID

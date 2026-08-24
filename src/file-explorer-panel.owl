@@ -1,7 +1,7 @@
 import "../../nest/lib/components/tree.owl"
 
 use nide:
-  include file-explorer-event file-tree-visible get-active-project-path get-home-directory set-nide-status string text-list-toggle
+  include file-explorer-event file-tree-window get-active-project-path get-home-directory scrollY set-nide-status string text-list-toggle widgetHeight
 
 state "file-explorer-panel":
   searchID = (id "file-explorer" "search")
@@ -58,7 +58,10 @@ widget file-explorer-panel:
   define:
     rootPath = (file-explorer-root)
     query = (editorText searchID)
-    rows = (file-tree-visible rootPath expandedPaths selectedPath query sortMode showHidden filterMode)
+    treeID = (id "file-explorer" "tree")
+    rowHeight = 27
+    window = (file-tree-window rootPath expandedPaths selectedPath query sortMode showHidden filterMode (scrollY treeID) (widgetHeight treeID) rowHeight 8)
+    rows = (dict-get window "rows")
     refreshID = (id "file-explorer" "refresh")
     hiddenID = (id "file-explorer" "hidden")
     sortID = (id "file-explorer" "sort")
@@ -140,7 +143,7 @@ widget file-explorer-panel:
           width = fill
           height = fit
 
-    column (id "file-explorer" "tree"):
+    column treeID:
       width = fill
       height = fill
       gap = 1
@@ -150,5 +153,11 @@ widget file-explorer-panel:
       if (empty? rows):
         tree-empty "file-explorer" "No files"
       else:
+        spacer (id "file-explorer" "tree-before"):
+          width = fill
+          height = fixed (dict-get window "before")
         for item (iter rows):
           file-explorer-row item
+        spacer (id "file-explorer" "tree-after"):
+          width = fill
+          height = fixed (dict-get window "after")

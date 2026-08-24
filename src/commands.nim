@@ -1,6 +1,6 @@
 # Low-level native bindings and environment helpers for Nide's Owl command layer.
 
-import std/[algorithm, os, sets, strutils, tables, sugar]
+import std/[algorithm, math, os, sets, strutils, tables, sugar]
 import owl
 
 const
@@ -365,6 +365,16 @@ proc addFileTreeRows(rows: var seq[Value], path: string, depth: int,
         rows.add childRows
   matchedAny
 
+proc fileTreeRows(root: string, expandedList: seq[string], selectedPath, query,
+    sortMode: string, showHidden, showDirs, showFiles: bool): seq[Value] =
+  let iconMode = detectFileIconMode()
+  var expanded = initHashSet[string]()
+  for item in expandedList:
+    expanded.incl item.expandTilde()
+  var remaining = 5000
+  discard addFileTreeRows(result, root, 0, expanded, selectedPath, query,
+      sortMode, iconMode, showHidden, showDirs, showFiles, remaining)
+
 proc defineFileExplorerCommands(module: var NativeModule,
     bridge: NideOwlBridge) =
   module.defineNative("file-icon-mode", proc(
@@ -442,15 +452,53 @@ proc defineFileExplorerCommands(module: var NativeModule,
       filterMode = env.evalTextArgument(arguments, 6, "file-tree-visible")
       showDirs = filterMode != "files"
       showFiles = filterMode != "directories"
-      iconMode = detectFileIconMode()
-    var expanded = initHashSet[string]()
-    for item in expandedList:
-      expanded.incl item.expandTilde()
+    list(fileTreeRows(root, expandedList, selectedPath, query, sortMode,
+        showHidden, showDirs, showFiles))
+  )
+
+  module.defineNative("file-tree-window", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 11:
+      raise newException(EvaluatorError,
+          "file-tree-window expects root, expanded, selected, query, sort, show-hidden, filter, scroll-y, viewport-height, row-height, overscan")
+    let
+      root = env.evalTextArgument(arguments, 0,
+          "file-tree-window").expandTilde()
+      expandedList = env.evalTextListArgument(arguments, 1, "file-tree-window")
+      selectedPath = env.evalTextArgument(arguments, 2, "file-tree-window")
+      query = env.evalTextArgument(arguments, 3, "file-tree-window")
+      sortMode = env.evalTextArgument(arguments, 4, "file-tree-window")
+      showHidden = env.evalBoolArgument(arguments, 5, "file-tree-window")
+      filterMode = env.evalTextArgument(arguments, 6, "file-tree-window")
+      scrollY = env.evalNumberArgument(arguments, 7, "file-tree-window")
+      viewportHeight = env.evalNumberArgument(arguments, 8, "file-tree-window")
+      rowHeight = max(env.evalNumberArgument(arguments, 9,
+          "file-tree-window").int, 1)
+      overscan = max(env.evalNumberArgument(arguments, 10,
+          "file-tree-window").int, 0)
+      showDirs = filterMode != "files"
+      showFiles = filterMode != "directories"
+      allRows = fileTreeRows(root, expandedList, selectedPath, query, sortMode,
+          showHidden, showDirs, showFiles)
+      total = allRows.len
+      first = max(floor(scrollY / rowHeight.float64).int - overscan, 0)
+      count = max(ceil(viewportHeight / rowHeight.float64).int + overscan * 2, 1)
+      stop = min(first + count, total)
     var rows: seq[Value]
-    var remaining = 1200
-    discard addFileTreeRows(rows, root, 0, expanded, selectedPath, query,
-        sortMode, iconMode, showHidden, showDirs, showFiles, remaining)
-    list(rows)
+    for index in first ..< stop:
+      rows.add allRows[index]
+    dictionaryValue([
+      ("rows", list(rows)),
+      ("before", number((first * rowHeight).float64)),
+      ("after", number(((total - stop) * rowHeight).float64)),
+      ("total", number(total.float64)),
+    ])
   )
 
   module.defineNative("file-explorer-event", proc(
