@@ -1,0 +1,130 @@
+use nide:
+  include close-floating get-buffer-preview-text get-buffers keyPressed kill-buffer preview-buffer rgb regex span starts-with string switch-buffer syntax text-contains
+
+state "find-buffer-panel":
+  queryID = (id "find-buffer" "query")
+  previewID = (id "find-buffer" "preview")
+  selectedID = ""
+
+fun buffer-matches? item query:
+  or (text-contains item.name query true) (text-contains item.path query true)
+
+fun visible-buffers buffers query:
+  define:
+    output = []
+  for item (iter buffers):
+    when (buffer-matches? item query):
+      append output item
+  output
+
+fun first-buffer-id rows:
+  if (empty? rows):
+    ""
+  else:
+    (first rows).id
+
+fun selected-buffer rows selected:
+  cond:
+    when (empty? rows):
+      nothing
+    when (= (first rows).id selected):
+      first rows
+    when true:
+      selected-buffer (rest rows) selected
+
+fun buffer-preview-syntax:
+  define:
+    rules = []:
+      span "\"" "\"" (rgb 210 170 110)
+      span "'" "'" (rgb 210 170 110)
+      starts-with "#" (rgb 112 145 118)
+      starts-with "//" (rgb 112 145 118)
+      regex "\\b(proc|func|type|let|var|const|import|from|if|else|elif|case|of|for|while|return|when|template|macro|object|enum)\\b" (rgb 126 190 235)
+  syntax "buffer-preview" rules
+
+fun buffer-row item:
+  define:
+    rowID = (id "find-buffer" "row" item.id)
+    killID = (id "find-buffer" "kill" item.id)
+  row (id "find-buffer" "row-shell" item.id):
+    width = fill
+    height = fixed 28
+    gap = 4
+    button rowID item.title:
+      width = fill
+      height = fixed 28
+      fontName = "editor"
+      buttonPadding = (insets 6 2 6 2)
+      buttonBorderStyle = ButtonBorderNone
+      buttonChromeStyle = ButtonChromeFlat
+      buttonTextAlign = JustifyStart
+      background = (pick (= item.id selectedID) (color 43 83 106) (color 0 0 0 0))
+      textScroll = true
+    button killID "×":
+      width = fixed 28
+      height = fixed 28
+      fontName = "editor"
+      buttonPadding = 0
+  tooltip rowID (pick (= item.path "") item.name item.path)
+  tooltip killID "Kill buffer"
+
+widget find-buffer-panel:
+  define:
+    query = (editorText queryID)
+    rows = (visible-buffers (get-buffers) query)
+    currentID = (pick (= selectedID "") (first-buffer-id rows) selectedID)
+    current = (selected-buffer rows currentID)
+    previewText = (get-buffer-preview-text)
+
+  events:
+    setEditorText previewID previewText
+    setEditorSyntax previewID (buffer-preview-syntax)
+    when (and (keyPressed "enter") (not (= currentID ""))):
+      switch-buffer currentID
+      close-floating
+    for item (iter rows):
+      when (clicked (id "find-buffer" "row" item.id)):
+        set selectedID item.id
+        preview-buffer item.id
+      when (clicked (id "find-buffer" "kill" item.id)):
+        kill-buffer item.id
+        when (= selectedID item.id):
+          set selectedID ""
+
+  panel (id "find-buffer" "panel"):
+    width = fill
+    height = fill
+    padding = 8
+    gap = 8
+    alignItems = AlignStretch
+    background = color 23 27 31
+    lineInput queryID "":
+      width = fill
+      height = fixed 30
+      fontName = "editor"
+    row (id "find-buffer" "body"):
+      width = fill
+      height = fill
+      gap = 8
+      alignItems = AlignStretch
+      column (id "find-buffer" "results"):
+        width = fixed 340
+        height = fill
+        gap = 1
+        scrollY = true
+        alignItems = AlignStretch
+        if (empty? rows):
+          label (id "find-buffer" "empty") "No buffers":
+            width = fill
+            height = fit
+        else:
+          for item (iter rows):
+            buffer-row item
+      editor previewID:
+        width = fill
+        height = fill
+        fontName = "editor"
+        lineNumbers = true
+        scrollbars = true
+        readOnly = true
+        syntax = "buffer-preview"

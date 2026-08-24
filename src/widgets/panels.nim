@@ -8,6 +8,7 @@ type
     PanelRight
     PanelTop
     PanelBottom
+    PanelFloating
 
   NidePanel* = object
     id*: string
@@ -24,6 +25,7 @@ proc panelDock*(name: string): PanelDock {.raises: [EvaluatorError].} =
   of "right": PanelRight
   of "top": PanelTop
   of "bottom": PanelBottom
+  of "floating": PanelFloating
   else:
     raise newException(EvaluatorError, "unknown panel dock: " & name)
 
@@ -33,6 +35,7 @@ proc name*(dock: PanelDock): string =
   of PanelRight: "right"
   of PanelTop: "top"
   of PanelBottom: "bottom"
+  of PanelFloating: "floating"
 
 proc textField(value: Value, field, owner: string): string {.raises: [
     EvaluatorError].} =

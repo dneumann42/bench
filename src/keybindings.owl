@@ -1,0 +1,25 @@
+use nide:
+  include close-floating open-floating-panel toggle-floating
+
+state "nide-keybindings":
+  ctrlX = false
+
+widget nide-keybindings:
+  events:
+    when (keyComboPressed "x" true):
+      set ctrlX true
+    when (keyPressed "escape"):
+      close-floating
+      set ctrlX false
+    when ctrlX:
+      when (keyPressed "f"):
+        open-floating-panel "find-file"
+        set ctrlX false
+      when (keyPressed "b"):
+        open-floating-panel "find-buffer"
+        set ctrlX false
+      when (keyPressed "t"):
+        toggle-floating
+        set ctrlX false
+      when (keyComboPressed "g" true):
+        set ctrlX false

@@ -1,5 +1,5 @@
 import buffers
-import std/[tables, oids, hashes]
+import std/[algorithm, tables, oids, hashes]
 
 type
   PaneOrientation* = enum
@@ -9,6 +9,7 @@ type
   Pane* = object
     orientation*: PaneOrientation
     bufferID*: BufferID
+    floating*: bool
     parent*: PaneID
     children*: seq[PaneID]
 
@@ -126,6 +127,28 @@ proc bufferReferenceCount*(paneManager: PaneManager, bufferID: BufferID): int =
     if pane.isLeaf and pane.bufferID == bufferID:
       inc result
 
+proc setFloating*(paneManager: var PaneManager, paneID: PaneID, floating: bool) =
+  if paneID in paneManager.panes and paneManager.panes[paneID].isLeaf:
+    paneManager.panes[paneID].floating = floating
+    if not floating:
+      paneManager.activePane = paneID
+
+proc floatingPaneIDs*(paneManager: PaneManager): seq[PaneID] =
+  for id, pane in paneManager.panes.pairs:
+    if pane.isLeaf and pane.floating:
+      result.add id
+  result.sort()
+
+proc hasDockedLeaf*(paneManager: PaneManager, paneID: PaneID): bool =
+  if paneID == InvalidPaneID or paneID notin paneManager.panes:
+    return false
+  let pane = paneManager.panes[paneID]
+  if pane.isLeaf:
+    return not pane.floating
+  for child in pane.children:
+    if paneManager.hasDockedLeaf(child):
+      return true
+
 proc focus*(paneManager: var PaneManager, paneID: PaneID) =
   if paneID in paneManager.panes and paneManager.panes[paneID].isLeaf:
     paneManager.activePane = paneID
@@ -202,6 +225,38 @@ proc unsplitActive*(paneManager: var PaneManager): BufferID =
 
   let nextIndex = min(activeIndex, children.high)
   paneManager.activePane = paneManager.firstLeaf(children[nextIndex])
+  paneManager.collapseSingleChildContainer(parent)
+  if paneManager.activePane == InvalidPaneID:
+    paneManager.activePane = paneManager.firstLeaf(paneManager.rootPane)
+
+proc closePane*(paneManager: var PaneManager, paneID: PaneID): BufferID =
+  if paneID == InvalidPaneID or paneID notin paneManager.panes:
+    return InvalidBufferID
+  if paneID == paneManager.rootPane or not paneManager.panes[paneID].isLeaf:
+    return InvalidBufferID
+
+  let
+    parent = paneManager.parentOf(paneID)
+    activeIndex =
+      if parent in paneManager.panes:
+        paneManager.panes[parent].children.find(paneID)
+      else:
+        -1
+  if parent == InvalidPaneID or parent notin paneManager.panes or activeIndex < 0:
+    return InvalidBufferID
+
+  result = paneManager.panes[paneID].bufferID
+  paneManager.removeChild(parent, paneID)
+  paneManager.panes.del(paneID)
+
+  let children = paneManager.panes[parent].children
+  if children.len == 0:
+    paneManager.activePane = InvalidPaneID
+    return
+
+  if paneManager.activePane == paneID:
+    let nextIndex = min(activeIndex, children.high)
+    paneManager.activePane = paneManager.firstLeaf(children[nextIndex])
   paneManager.collapseSingleChildContainer(parent)
   if paneManager.activePane == InvalidPaneID:
     paneManager.activePane = paneManager.firstLeaf(paneManager.rootPane)

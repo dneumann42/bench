@@ -37,8 +37,9 @@ fun toolbar-spacer:
 fun file-menu:
   toolbar-menu "file" "File":
     toolbar-item "file.newFile" "New File" "file-new"
-    toolbar-item "file.openFile" "Open File" "file-open"
-    toolbar-item "file.openBuffer" "Open Buffer" "buffer-open"
+    toolbar-item "file.openFile" "Find File" "find-file"
+    toolbar-item "file.openSystemFile" "Open File Dialog" "file-open"
+    toolbar-item "file.openBuffer" "Find Buffer" "find-buffer"
     toolbar-item "file.saveBuffer" "Save Buffer" "file-save"
     toolbar-item "file.saveBufferAs" "Save Buffer As" "file-save-as"
 
@@ -67,6 +68,8 @@ toolbars:
 panels:
   dock-panel "projects" "Projects" "left" "projects-panel.owl" "projects-panel" false 280
   dock-panel "files" "Files" "left" "file-explorer-panel.owl" "file-explorer-panel" false 320
+  dock-panel "find-file" "Find File" "floating" "find-file-panel.owl" "find-file-panel" false 720
+  dock-panel "find-buffer" "Find Buffer" "floating" "find-buffer-panel.owl" "find-buffer-panel" false 720
 
 statusbar:
   label (id "statusbar" "status") (get-status):

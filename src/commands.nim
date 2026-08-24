@@ -1,6 +1,6 @@
 # Low-level native bindings and environment helpers for Nide's Owl command layer.
 
-import std/[algorithm, math, os, sets, strutils, tables, sugar]
+import std/[algorithm, math, os, sets, streams, strutils, tables, sugar, times]
 import owl
 
 const
@@ -10,6 +10,8 @@ const
   ActionMarkBufferSaved* = "mark-buffer-saved"
   ActionToggleProjectsPanel* = "toggle-projects-panel"
   ActionToggleFileExplorerPanel* = "toggle-file-explorer-panel"
+  MaxFinderRows = 400
+  MaxPreviewBytes = 200_000
 
   VarState* = "nide-state"
   VarRequestedActions* = "nide-requested-actions"
@@ -375,8 +377,71 @@ proc fileTreeRows(root: string, expandedList: seq[string], selectedPath, query,
   discard addFileTreeRows(result, root, 0, expanded, selectedPath, query,
       sortMode, iconMode, showHidden, showDirs, showFiles, remaining)
 
+proc fuzzyScore(haystack, needle: string): int =
+  if needle.len == 0:
+    return 0
+  let
+    hay = haystack.toLowerAscii()
+    query = needle.toLowerAscii()
+  if hay.contains(query):
+    return query.len * 20 - hay.find(query)
+  var
+    index = 0
+    score = 0
+    streak = 0
+  for ch in hay:
+    if index < query.len and ch == query[index]:
+      inc index
+      inc streak
+      score += 4 + streak
+    else:
+      streak = 0
+  if index == query.len:
+    score - hay.len
+  else:
+    low(int) div 4
+
+proc matchesFuzzy(haystack, query: string): bool =
+  query.len == 0 or fuzzyScore(haystack, query) > low(int) div 8
+
+proc collectProjectFiles(
+    root, baseRoot, query: string,
+    ignoredDirs: HashSet[string],
+    rows: var seq[tuple[score: int, path, name, relative: string]],
+) =
+  try:
+    for kind, path in walkDir(root, relative = false):
+      let name = path.extractFilename
+      if name.len == 0:
+        continue
+      if kind == pcDir:
+        if name in ignoredDirs:
+          continue
+        collectProjectFiles(path, baseRoot, query, ignoredDirs, rows)
+      elif kind == pcFile:
+        var rel = path
+        try:
+          rel = relativePath(path, baseRoot)
+        except CatchableError:
+          discard
+        if not matchesFuzzy(name & " " & rel, query):
+          continue
+        rows.add((fuzzyScore(name & " " & rel, query), path, name, rel))
+  except CatchableError:
+    discard
+
 proc defineFileExplorerCommands(module: var NativeModule,
     bridge: NideOwlBridge) =
+  var
+    finderCacheRoot = ""
+    finderCacheQuery = ""
+    finderCacheIgnored: seq[string]
+    finderCacheRows: seq[tuple[score: int, path, name, relative: string]]
+    previewCachePath = ""
+    previewCacheMtime: Time
+    previewCacheSize: BiggestInt = -1
+    previewCacheText = ""
+
   module.defineNative("file-icon-mode", proc(
       env: Environment,
       arguments: seq[SyntaxNode],
@@ -519,6 +584,99 @@ proc defineFileExplorerCommands(module: var NativeModule,
         text("")
     bridge.request("file-explorer." & action, [target])
     boolean(true)
+  )
+
+  module.defineNative("project-files-window", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len notin {2, 3, 4}:
+      raise newException(EvaluatorError,
+          "project-files-window expects root, query, optional selected path, and optional ignored directories")
+    let
+      root = env.evalTextArgument(arguments, 0,
+          "project-files-window").expandTilde()
+      query = env.evalTextArgument(arguments, 1,
+          "project-files-window").toLowerAscii()
+      selectedPath =
+        if arguments.len >= 3:
+          env.evalTextArgument(arguments, 2, "project-files-window")
+        else:
+          ""
+      ignored =
+        if arguments.len == 4:
+          env.evalTextListArgument(arguments, 3, "project-files-window")
+        else:
+          @[]
+    if not dirExists(root):
+      return list(@[])
+    if root != finderCacheRoot or query != finderCacheQuery or
+        ignored != finderCacheIgnored:
+      finderCacheRoot = root
+      finderCacheQuery = query
+      finderCacheIgnored = ignored
+      finderCacheRows.setLen(0)
+      var ignoredSet = initHashSet[string]()
+      for item in ignored:
+        if item.len > 0:
+          ignoredSet.incl item
+      collectProjectFiles(root, root, query, ignoredSet, finderCacheRows)
+      finderCacheRows.sort(proc(a, b: tuple[score: int, path, name, relative: string]): int =
+        result = cmp(b.score, a.score)
+        if result != 0:
+          return
+        result = cmp(a.relative.toLowerAscii(), b.relative.toLowerAscii())
+      )
+    var rows: seq[Value]
+    for index, candidate in finderCacheRows:
+      if index >= MaxFinderRows:
+        break
+      let selected = candidate.path == selectedPath or
+        (selectedPath.len == 0 and index == 0)
+      rows.add dictionaryValue([
+        ("path", text(candidate.path)),
+        ("name", text(candidate.name)),
+        ("relative", text(candidate.relative)),
+        ("selected", boolean(selected)),
+      ])
+    list(rows)
+  )
+
+  module.defineNative("file-preview-text", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    expectOneArgument("file-preview-text", arguments)
+    let path = env.evalTextArgument(arguments, 0, "file-preview-text").expandTilde()
+    if path.len == 0 or not fileExists(path):
+      return text("")
+    try:
+      let
+        info = getFileInfo(path)
+        modified = info.lastWriteTime
+        size = getFileSize(path)
+      if path == previewCachePath and modified == previewCacheMtime and
+          size == previewCacheSize:
+        return text(previewCacheText)
+      var stream = openFileStream(path, fmRead)
+      if stream.isNil:
+        return text("")
+      defer: stream.close()
+      previewCachePath = path
+      previewCacheMtime = modified
+      previewCacheSize = size
+      previewCacheText = stream.readStr(MaxPreviewBytes)
+      text(previewCacheText)
+    except CatchableError as error:
+      raise newException(EvaluatorError, error.msg)
   )
 
 proc defineStringCommand(module: var NativeModule) =
@@ -867,6 +1025,8 @@ proc registerInternalCommands*(evaluator: var Evaluator,
   nide.defineBridgeGetter("get-active-project-path", "active-project-path", bridge)
   nide.defineBridgeGetter("get-home-directory", "home-directory", bridge)
   nide.defineBridgeGetter("get-panels", "panels", bridge)
+  nide.defineBridgeGetter("get-buffers", "buffers", bridge)
+  nide.defineBridgeGetter("get-buffer-preview-text", "buffer-preview-text", bridge)
   nide.defineBridgeGetter("get-current-mode", "active-buffer-mode", bridge)
   nide.defineBridgeGetter("auto-track-opened-projects",
       "auto-track-opened-projects", bridge)
@@ -883,6 +1043,17 @@ proc registerInternalCommands*(evaluator: var Evaluator,
   nide.defineBridgeRequest("save-projects", "projects.save", bridge, [0])
   nide.defineBridgeRequest("set-nide-status", "status.set", bridge, [1])
   nide.defineBridgeRequest("toggle-panel", "panel.toggle", bridge, [1])
+  nide.defineBridgeRequest("open-floating-panel", "panel.open-floating", bridge, [1])
+  nide.defineBridgeRequest("float-panel", "panel.float", bridge, [1])
+  nide.defineBridgeRequest("dock-panel", "panel.dock", bridge, [1])
+  nide.defineBridgeRequest("float-active-pane", "pane.float-active", bridge, [0])
+  nide.defineBridgeRequest("dock-pane", "pane.dock", bridge, [1])
+  nide.defineBridgeRequest("open-file-path", "file.open-path", bridge, [1])
+  nide.defineBridgeRequest("switch-buffer", "buffer.switch", bridge, [1])
+  nide.defineBridgeRequest("kill-buffer", "buffer.kill", bridge, [1])
+  nide.defineBridgeRequest("preview-buffer", "buffer.preview", bridge, [1])
+  nide.defineBridgeRequest("close-floating", "floating.close", bridge, [0])
+  nide.defineBridgeRequest("toggle-floating", "floating.toggle", bridge, [0])
   nide.defineBridgeRequest("set-editor-syntax", "buffer.set-syntax", bridge, [1])
   nide.defineBridgeRequest("clear-editor-syntax", "buffer.clear-syntax", bridge, [0])
   nide.defineBridgeRequest("set-mode-hook", "buffer.set-mode-hook", bridge, [2])

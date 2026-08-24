@@ -51,6 +51,13 @@ type
     lastFocusedEditorPane: PaneID
     commandStatus: string
     panels: seq[NidePanel]
+    floatingOpen: bool
+    floatingTab: int
+    floatingTabKey: string
+    floatingWidth: float64
+    floatingHeight: float64
+    bufferPreviewID: BufferID
+    needsRedraw: bool
     pendingFileAction: PendingFileAction
     pendingPath: string
     status: string
@@ -99,6 +106,10 @@ proc init(T: typedesc[Nide]): T =
       loadedModes: initHashSet[string](),
       modeHooks: initTable[string, Table[string, string]](),
       buffers: BufferManager.init(),
+      floatingOpen: false,
+      floatingTab: 0,
+      floatingWidth: 1040.0,
+      floatingHeight: 680.0,
       status: "Ready")
   result.uiRuntime = uiRuntime
   result.owlErrorApp = NestOwlApp(rootPath: NideSourceDir / "load.owl",
@@ -113,6 +124,12 @@ proc init(T: typedesc[Nide]): T =
     NidePanel(id: "files", title: "Files", dock: PanelLeft,
       source: "file-explorer-panel.owl", widget: "file-explorer-panel",
       open: false, size: 320),
+    NidePanel(id: "find-file", title: "Find File", dock: PanelFloating,
+      source: "find-file-panel.owl", widget: "find-file-panel",
+      open: false, size: 720),
+    NidePanel(id: "find-buffer", title: "Find Buffer", dock: PanelFloating,
+      source: "find-buffer-panel.owl", widget: "find-buffer-panel",
+      open: false, size: 720),
   ]
 
 proc nideConfigDir(): string =
@@ -177,6 +194,16 @@ proc activeBufferID(model: Nide): BufferID =
     return InvalidBufferID
   model.panes.panes[paneID].bufferID
 
+proc requestFrame(model: var Nide) =
+  model.needsRedraw = true
+
+proc queueOpenFile(model: var Nide, path: string) =
+  if path.len == 0:
+    return
+  model.pendingFileAction = OpenFileAction
+  model.pendingPath = path
+  model.requestFrame()
+
 proc requestOpenFile(model: var Nide) =
   discard model
   dialogs.browse(proc(path: string) =
@@ -207,6 +234,7 @@ proc newFile(model: var Nide) =
     model.runBufferHook(id, "onunload")
     model.buffers.replaceWithScratch(id)
   model.status = "New file"
+  model.requestFrame()
 
 proc openFile(model: var Nide, path: string) =
   let id = model.activeBufferID()
@@ -215,25 +243,19 @@ proc openFile(model: var Nide, path: string) =
     return
   try:
     let existingID = model.buffers.findByPath(path)
-    if existingID != InvalidBufferID and existingID != id:
-      if model.panes.bufferReferenceCount(id) <= 1:
-        model.runBufferHook(id, "onunload")
+    if existingID != InvalidBufferID:
       model.panes.setActiveBuffer(existingID)
-      model.dropBufferIfUnreferenced(id)
       model.status = "Opened " & path
+      model.requestFrame()
       return
-    if existingID == InvalidBufferID and model.panes.bufferReferenceCount(id) > 1:
-      let newID = model.buffers.openBuffer(path)
-      model.panes.setActiveBuffer(newID)
-      model.applyFileMode(newID)
-      model.status = "Opened " & path
-      return
-    model.runBufferHook(id, "onunload")
-    model.buffers.replaceWithFile(id, path)
-    model.applyFileMode(id)
+    let newID = model.buffers.openBuffer(path)
+    model.panes.setActiveBuffer(newID)
+    model.applyFileMode(newID)
     model.status = "Opened " & path
+    model.requestFrame()
   except CatchableError as error:
     model.status = "Open failed: " & error.msg
+    model.requestFrame()
 
 proc saveFileAs(model: var Nide, path: string) =
   let id = model.activeBufferID()
@@ -267,22 +289,34 @@ proc splitColumn(model: var Nide) =
   let bufferID = model.buffers.newScratchBuffer()
   discard model.panes.addColumn(bufferID)
   model.status = "Split column"
+  model.requestFrame()
 
 proc splitRow(model: var Nide) =
   let bufferID = model.buffers.newScratchBuffer()
   discard model.panes.addRow(bufferID)
   model.status = "Split row"
+  model.requestFrame()
 
 proc unsplitPane(model: var Nide) =
   let bufferID = model.panes.unsplitActive()
   if bufferID == InvalidBufferID:
     model.status = "Cannot unsplit the last pane"
+    model.requestFrame()
     return
-  if model.buffers.hasBuffer(bufferID) and
-      model.panes.bufferReferenceCount(bufferID) == 0:
-    model.runBufferHook(bufferID, "onunload")
-    model.buffers.buffers.del(bufferID)
   model.status = "Unsplit pane"
+  model.requestFrame()
+
+proc closePane(model: var Nide, paneID: PaneID): bool =
+  let bufferID = model.panes.closePane(paneID)
+  if bufferID == InvalidBufferID:
+    model.status = "Cannot close the last pane"
+    model.requestFrame()
+    return false
+  if model.lastFocusedEditorPane == paneID:
+    model.lastFocusedEditorPane = model.panes.activePane
+  model.status = "Closed pane"
+  model.requestFrame()
+  true
 
 proc bufferIDs(model: Nide): seq[string] =
   for id in model.buffers.buffers.keys:
@@ -368,9 +402,120 @@ proc togglePanel(model: var Nide, target: string): bool =
   for panel in model.panels.mitems:
     if panel.id == target:
       panel.open = not panel.open
+      if panel.dock == PanelFloating and panel.open:
+        model.floatingOpen = true
+        model.floatingTabKey = "panel:" & panel.id
       model.status =
         if panel.open: panel.title & " panel opened" else: panel.title & " panel closed"
+      model.requestFrame()
       return true
+
+proc openFloatingPanel(model: var Nide, target: string): bool =
+  for panel in model.panels.mitems:
+    if panel.id == target:
+      panel.dock = PanelFloating
+      panel.open = true
+      model.floatingOpen = true
+      model.floatingTabKey = "panel:" & panel.id
+      model.status = panel.title & " opened"
+      model.requestFrame()
+      return true
+
+proc dockPanel(model: var Nide, target: string): bool =
+  for panel in model.panels.mitems:
+    if panel.id == target:
+      if panel.dock == PanelFloating:
+        panel.dock = PanelLeft
+      panel.open = true
+      model.status = panel.title & " docked"
+      model.requestFrame()
+      return true
+
+proc floatPanel(model: var Nide, target: string): bool =
+  for panel in model.panels.mitems:
+    if panel.id == target:
+      panel.dock = PanelFloating
+      panel.open = true
+      model.floatingOpen = true
+      model.floatingTabKey = "panel:" & panel.id
+      model.status = panel.title & " undocked"
+      model.requestFrame()
+      return true
+
+proc floatPane(model: var Nide, paneID: PaneID): bool =
+  if paneID notin model.panes.panes or not model.panes.panes[paneID].isLeaf:
+    return false
+  model.panes.setFloating(paneID, true)
+  model.floatingOpen = true
+  model.floatingTabKey = "pane:" & paneID
+  model.status = "Pane undocked"
+  model.requestFrame()
+  true
+
+proc dockPane(model: var Nide, paneID: PaneID): bool =
+  if paneID notin model.panes.panes or not model.panes.panes[paneID].isLeaf:
+    return false
+  model.panes.setFloating(paneID, false)
+  model.floatingTabKey = ""
+  model.status = "Pane docked"
+  model.requestFrame()
+  true
+
+proc switchBuffer(model: var Nide, bufferID: BufferID): bool =
+  if not model.buffers.hasBuffer(bufferID):
+    return false
+  var targetPane = model.activeEditorPane()
+  if targetPane == InvalidPaneID or targetPane notin model.panes.panes:
+    targetPane = model.panes.firstLeaf(model.panes.rootPane)
+  if targetPane == InvalidPaneID:
+    return false
+  model.panes.focus(targetPane)
+  model.panes.setActiveBuffer(bufferID)
+  model.lastFocusedEditorPane = targetPane
+  model.status = "Switched to " & model.buffers.buffers[bufferID].name
+  model.requestFrame()
+  true
+
+proc killBuffer(model: var Nide, bufferID: BufferID): bool =
+  if not model.buffers.hasBuffer(bufferID):
+    return false
+  model.runBufferHook(bufferID, "onunload")
+  let replacement =
+    if model.panes.bufferReferenceCount(bufferID) > 0:
+      model.buffers.newScratchBuffer()
+    else:
+      InvalidBufferID
+  if replacement != InvalidBufferID:
+    for pane in model.panes.panes.mvalues:
+      if pane.isLeaf and pane.bufferID == bufferID:
+        pane.bufferID = replacement
+  model.buffers.buffers.del(bufferID)
+  if model.bufferPreviewID == bufferID:
+    model.bufferPreviewID = replacement
+  model.status = "Killed buffer"
+  model.requestFrame()
+  true
+
+proc closeFloating(model: var Nide) =
+  model.floatingOpen = false
+  model.requestFrame()
+
+proc toggleFloating(model: var Nide) =
+  var hasFloating = false
+  for panel in model.panels:
+    if panel.dock == PanelFloating and panel.open:
+      hasFloating = true
+      break
+  if not hasFloating:
+    hasFloating = model.panes.floatingPaneIDs().len > 0
+  if hasFloating:
+    model.floatingOpen = not model.floatingOpen
+    model.requestFrame()
+
+proc previewBuffer(model: var Nide, bufferID: BufferID) =
+  if model.buffers.hasBuffer(bufferID):
+    model.bufferPreviewID = bufferID
+    model.requestFrame()
 
 proc handleToolbarEvent(model: var Nide, ui: var UI, event: ToolbarEvent) =
   case event.kind
@@ -417,6 +562,42 @@ proc panelsValue(model: Nide): Value =
     values.add dictionary(entries)
   list(values)
 
+proc previewText(text: string): string =
+  const MaxPreviewChars = 200_000
+  if text.len <= MaxPreviewChars:
+    text
+  else:
+    text[0 ..< MaxPreviewChars]
+
+proc buffersValue(model: Nide): Value =
+  var values: seq[Value]
+  for id in model.bufferIDs():
+    if id notin model.buffers.buffers:
+      continue
+    let buffer = model.buffers.buffers[id]
+    let title =
+      if buffer.dirty: "*" & buffer.name else: buffer.name
+    var entries = initTable[string, Value]()
+    entries["id"] = text(id)
+    entries["name"] = text(buffer.name)
+    entries["title"] = text(title)
+    entries["path"] = text(buffer.path)
+    entries["mode"] = text(string(buffer.fileMode))
+    entries["dirty"] = boolean(buffer.dirty())
+    values.add dictionary(entries)
+  list(values)
+
+proc bufferPreviewText(model: Nide): string =
+  let id =
+    if model.buffers.hasBuffer(model.bufferPreviewID):
+      model.bufferPreviewID
+    else:
+      model.activeBufferID()
+  if model.buffers.hasBuffer(id):
+    model.buffers.buffers[id].editor.text.previewText()
+  else:
+    ""
+
 proc activeBufferMode(model: Nide): string =
   let id = model.activeBufferID()
   if model.buffers.hasBuffer(id):
@@ -435,6 +616,8 @@ proc publishBridgeData(model: var Nide) =
       model.projectManager.activeProjectPath()))
   model.bridge.putData("home-directory", text(getHomeDir()))
   model.bridge.putData("panels", model.panelsValue())
+  model.bridge.putData("buffers", model.buffersValue())
+  model.bridge.putData("buffer-preview-text", text(model.bufferPreviewText()))
   model.bridge.putData("active-buffer-mode", text(model.activeBufferMode()))
   model.bridge.putData("auto-track-opened-projects",
       boolean(NideAutoTrackOpenedProjects))
@@ -590,7 +773,7 @@ proc fileExplorerOpenRequest(model: var Nide, request: NideBridgeRequest) =
   if path.len == 0:
     return
   if fileExists(path):
-    model.openFile(path)
+    model.queueOpenFile(path)
   elif dirExists(path):
     model.status = "Selected directory " & path
   else:
@@ -741,6 +924,53 @@ proc configureBridge(model: var Nide) =
   model.registerRequest(ActionToggleProjectsPanel, toggleProjectsPanelRequest)
   model.registerRequest(ActionToggleFileExplorerPanel, toggleFileExplorerPanelRequest)
   model.registerRequest("panel.toggle", togglePanelRequest)
+  model.registerRequest("panel.open-floating", proc(model: var Nide,
+      request: NideBridgeRequest) =
+    discard model.openFloatingPanel(request.requestText(0))
+  )
+  model.registerRequest("panel.float", proc(model: var Nide,
+      request: NideBridgeRequest) =
+    discard model.floatPanel(request.requestText(0))
+  )
+  model.registerRequest("panel.dock", proc(model: var Nide,
+      request: NideBridgeRequest) =
+    discard model.dockPanel(request.requestText(0))
+  )
+  model.registerRequest("pane.float-active", proc(model: var Nide,
+      request: NideBridgeRequest) =
+    discard request
+    discard model.floatPane(model.activeEditorPane())
+  )
+  model.registerRequest("pane.dock", proc(model: var Nide,
+      request: NideBridgeRequest) =
+    discard model.dockPane(request.requestText(0))
+  )
+  model.registerRequest("floating.close", proc(model: var Nide,
+      request: NideBridgeRequest) =
+    discard request
+    model.closeFloating()
+  )
+  model.registerRequest("floating.toggle", proc(model: var Nide,
+      request: NideBridgeRequest) =
+    discard request
+    model.toggleFloating()
+  )
+  model.registerRequest("file.open-path", proc(model: var Nide,
+      request: NideBridgeRequest) =
+    model.queueOpenFile(request.requestText(0))
+  )
+  model.registerRequest("buffer.switch", proc(model: var Nide,
+      request: NideBridgeRequest) =
+    discard model.switchBuffer(request.requestText(0))
+  )
+  model.registerRequest("buffer.kill", proc(model: var Nide,
+      request: NideBridgeRequest) =
+    discard model.killBuffer(request.requestText(0))
+  )
+  model.registerRequest("buffer.preview", proc(model: var Nide,
+      request: NideBridgeRequest) =
+    model.previewBuffer(request.requestText(0))
+  )
   model.registerRequest("file-explorer.open", fileExplorerOpenRequest)
   for action in ["select", "toggle", "refresh", "search", "sort", "filter", "hidden"]:
     model.registerRequest("file-explorer." & action, fileExplorerEventRequest)
@@ -768,6 +998,7 @@ proc processPendingFileAction(model: var Nide) =
       model.syncCommandBindings()
       model.processBridgeRequests()
       model.processCommandBindings()
+      model.requestFrame()
     except OwlError as error:
       model.status = "Project open failed: " & error.msg
     pickedProjectPath = ""
@@ -775,6 +1006,7 @@ proc processPendingFileAction(model: var Nide) =
   if pickedFileAction != NoFileAction:
     model.pendingFileAction = pickedFileAction
     model.pendingPath = pickedPath
+    model.requestFrame()
     pickedFileAction = NoFileAction
     pickedPath = ""
 
@@ -787,6 +1019,12 @@ proc processPendingFileAction(model: var Nide) =
     model.saveFileAs(model.pendingPath)
   model.pendingFileAction = NoFileAction
   model.pendingPath = ""
+
+proc flushModelRedraw(ui: var UI, model: var Nide) =
+  if model.needsRedraw:
+    ui.markAllDirty()
+    ui.requestRedrawAfter(0)
+    model.needsRedraw = false
 
 proc bufferTitle(buffer: Buffer): string =
   result = buffer.name
@@ -820,12 +1058,15 @@ proc consumeRuntimeError(model: var Nide, context: string): bool =
     return true
   false
 
-proc layoutPane(ui: var UI, model: var Nide, paneID: PaneID) =
+proc layoutPane(ui: var UI, model: var Nide, paneID: PaneID,
+    floatingContent = false) =
   if paneID == InvalidPaneID or paneID notin model.panes.panes:
     return
 
   let pane = model.panes.panes[paneID]
   if pane.isLeaf:
+    if pane.floating and not floatingContent:
+      return
     if not model.buffers.hasBuffer(pane.bufferID):
       return
 
@@ -842,6 +1083,20 @@ proc layoutPane(ui: var UI, model: var Nide, paneID: PaneID) =
           gap = 8, alignItems = AlignCenter)):
         ui.label(ui.id("paneTitle", paneID),
             bufferTitle(model.buffers.buffers[pane.bufferID]), width = fill())
+        if floatingContent:
+          if ui.button(ui.id("paneDock", paneID), "⇲", width = fixed(30),
+              height = fit()):
+            discard model.dockPane(paneID)
+          ui.tooltip(ui.id("paneDock", paneID), "Dock pane")
+        else:
+          if ui.button(ui.id("paneFloat", paneID), "⇱", width = fixed(30),
+              height = fit()):
+            discard model.floatPane(paneID)
+          ui.tooltip(ui.id("paneFloat", paneID), "Undock pane")
+        if ui.button(ui.id("paneClose", paneID), "×", width = fixed(30),
+            height = fit()):
+          discard model.closePane(paneID)
+        ui.tooltip(ui.id("paneClose", paneID), "Close pane")
       ui.textEditor(editorID, model.buffers.buffers[pane.bufferID].editor,
           width = fill(min = MinPaneWidth), height = fill(min = MinPaneHeight),
           fontName = "editor", lineNumbers = true, scrollbars = true,
@@ -855,13 +1110,15 @@ proc layoutPane(ui: var UI, model: var Nide, paneID: PaneID) =
         height = fill(min = MinPaneHeight), gap = 4,
         alignSelf = AlignStretch)):
       for child in pane.children:
-        ui.layoutPane(model, child)
+        if floatingContent or model.panes.hasDockedLeaf(child):
+          ui.layoutPane(model, child, floatingContent)
   else:
     ui.column(ui.id("column", paneID), cfg(width = fill(min = MinPaneWidth),
         height = fill(min = MinPaneHeight), gap = 4,
         alignSelf = AlignStretch)):
       for child in pane.children:
-        ui.layoutPane(model, child)
+        if floatingContent or model.panes.hasDockedLeaf(child):
+          ui.layoutPane(model, child, floatingContent)
 
 proc renderPanelDock(ui: var UI, model: var Nide, dock: PanelDock) =
   var hasOpen = false
@@ -874,20 +1131,123 @@ proc renderPanelDock(ui: var UI, model: var Nide, dock: PanelDock) =
 
   for panel in model.panels:
     if panel.dock == dock and panel.open:
-      model.uiRuntime.renderWidget(ui, NideSourceDir /
-          panel.source, panel.widget)
-      if model.consumeRuntimeError(panel.title & " panel"):
-        model.uiRuntime.evaluator.env.bindText(VarStatus, model.status)
-      model.processBridgeRequests()
+      let panelConfig =
+        case dock
+        of PanelLeft, PanelRight:
+          cfg(width = fixed(panel.size), height = fill(), padding = 0, gap = 0,
+              alignItems = AlignStretch)
+        of PanelTop, PanelBottom:
+          cfg(width = fill(), height = fixed(panel.size), padding = 0, gap = 0,
+              alignItems = AlignStretch)
+        of PanelFloating:
+          cfg(width = fixed(panel.size), height = fill(), padding = 0, gap = 0,
+              alignItems = AlignStretch)
+      ui.column(ui.id("panelDockShell", panel.id), panelConfig):
+        ui.row(ui.id("panelDockHeader", panel.id), cfg(width = fill(),
+            height = fit(), padding = 4, gap = 6, alignItems = AlignCenter,
+            ).withBackground(color(30, 34, 38))):
+          ui.label(ui.id("panelDockTitle", panel.id), panel.title, width = fill())
+          if ui.button(ui.id("panelDockFloat", panel.id), "⇱", width = fixed(30),
+              height = fit()):
+            discard model.floatPanel(panel.id)
+          ui.tooltip(ui.id("panelDockFloat", panel.id), "Undock panel")
+        model.uiRuntime.renderWidget(ui, NideSourceDir /
+            panel.source, panel.widget)
+        if model.consumeRuntimeError(panel.title & " panel"):
+          model.uiRuntime.evaluator.env.bindText(VarStatus, model.status)
+        model.processBridgeRequests()
+        ui.flushModelRedraw(model)
+
+proc renderFloatingDock(ui: var UI, model: var Nide) =
+  var
+    labels: seq[string]
+    keys: seq[string]
+    panelIDs: seq[string]
+    paneIDs: seq[PaneID]
+  for panel in model.panels:
+    if panel.dock == PanelFloating and panel.open:
+      labels.add panel.title
+      keys.add "panel:" & panel.id
+      panelIDs.add panel.id
+      paneIDs.add InvalidPaneID
+  for paneID in model.panes.floatingPaneIDs():
+    if paneID in model.panes.panes:
+      let bufferID = model.panes.panes[paneID].bufferID
+      if model.buffers.hasBuffer(bufferID):
+        labels.add bufferTitle(model.buffers.buffers[bufferID])
+        keys.add "pane:" & paneID
+        panelIDs.add ""
+        paneIDs.add paneID
+
+  if labels.len == 0:
+    model.floatingOpen = false
+    return
+
+  if model.floatingTabKey.len > 0:
+    for index, key in keys:
+      if key == model.floatingTabKey:
+        model.floatingTab = index
+        break
+  model.floatingTab = model.floatingTab.clamp(0, labels.high)
+  model.floatingTabKey = keys[model.floatingTab]
+
+  let floatingDockID = ui.id("floatingDock")
+  ui.resizableModalDialog(floatingDockID, model.floatingOpen,
+      model.floatingWidth, model.floatingHeight, 720.0, 420.0, 1800.0,
+      1200.0, cfg(padding = 10, gap = 8, alignItems = AlignStretch,
+      ).withBackground(color(21, 24, 28))):
+    ui.row(ui.id("floatingDockHeader"), cfg(width = fill(), height = fit(),
+        gap = 8, alignItems = AlignCenter)):
+      ui.tabs(ui.id("floatingDockTabs"), labels, model.floatingTab,
+          width = fill(), height = fit())
+      model.floatingTab = model.floatingTab.clamp(0, labels.high)
+      model.floatingTabKey = keys[model.floatingTab]
+      let selectedPanel = panelIDs[model.floatingTab]
+      let selectedPane = paneIDs[model.floatingTab]
+      if selectedPanel.len > 0:
+        if ui.button(ui.id("floatingPanelDock", selectedPanel), "⇲",
+            width = fixed(32), height = fit()):
+          discard model.dockPanel(selectedPanel)
+        ui.tooltip(ui.id("floatingPanelDock", selectedPanel), "Dock panel")
+      elif selectedPane != InvalidPaneID:
+        if ui.button(ui.id("floatingPaneDock", selectedPane), "⇲",
+            width = fixed(32), height = fit()):
+            discard model.dockPane(selectedPane)
+        ui.tooltip(ui.id("floatingPaneDock", selectedPane), "Dock pane")
+      if ui.button(ui.id("floatingDockHide"), "×", width = fixed(32),
+          height = fit()):
+        model.closeFloating()
+      ui.tooltip(ui.id("floatingDockHide"), "Hide")
+    if panelIDs[model.floatingTab].len > 0:
+      for panel in model.panels:
+        if panel.id == panelIDs[model.floatingTab]:
+          model.uiRuntime.renderWidget(ui, NideSourceDir /
+              panel.source, panel.widget)
+          if model.consumeRuntimeError(panel.title & " panel"):
+            model.uiRuntime.evaluator.env.bindText(VarStatus, model.status)
+          model.processBridgeRequests()
+          ui.flushModelRedraw(model)
+          break
+    elif paneIDs[model.floatingTab] != InvalidPaneID:
+      ui.layoutPane(model, paneIDs[model.floatingTab], floatingContent = true)
 
 widget nideApplication(model: var Nide):
   model.owlErrorApp.pollOwlErrorDialog()
   model.processPendingFileAction()
+  ui.flushModelRedraw(model)
   model.uiRuntime.evaluator.env.bindText(VarStatus, model.status)
   model.publishBridgeData()
-  model.processBridgeRequests()
+  if ui.keyPressed("escape"):
+    model.closeFloating()
+    ui.flushModelRedraw(model)
 
   ui.column(ui.id("root"), cfg(width = fill(), height = fill(), gap = 0)):
+    model.uiRuntime.renderWidget(ui, NideSourceDir / "keybindings.owl",
+        "nide-keybindings")
+    discard model.consumeRuntimeError("Keybindings")
+    model.processBridgeRequests()
+    ui.flushModelRedraw(model)
+
     for event in ui.toolbarDock(model.toolbars, model.uiRuntime, TopDock,
         NideSourceDir):
       model.handleToolbarEvent(ui, event)
@@ -914,6 +1274,10 @@ widget nideApplication(model: var Nide):
                   gap = 0,
               alignSelf = AlignStretch)):
             ui.layoutPane(model, model.panes.rootPane)
+            if not model.panes.hasDockedLeaf(model.panes.rootPane):
+              ui.center(ui.id("emptyWorkspace"), fill(), fill()):
+                ui.label(ui.id("emptyWorkspaceLabel"), "All panes are floating",
+                    width = fit(), height = fit())
 
       ui.renderPanelDock(model, PanelRight)
 
@@ -930,6 +1294,9 @@ widget nideApplication(model: var Nide):
     discard model.consumeRuntimeError("Bottom toolbar")
 
     ui.statusbar(model.uiRuntime)
+
+  ui.renderFloatingDock(model)
+  ui.flushModelRedraw(model)
 
 proc start =
   let config = AppConfig.init(width = 900, height = 640, title = "Nide")

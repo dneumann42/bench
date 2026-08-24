@@ -1,0 +1,114 @@
+use nide:
+  include close-floating file-preview-text get-active-project-path get-home-directory keyPressed open-file-path project-files-window rgb regex span starts-with string syntax
+
+state "find-file-panel":
+  queryID = (id "find-file" "query")
+  previewID = (id "find-file" "preview")
+  selectedPath = ""
+  ignoredDirectories = []:
+    ".git"
+    "node_modules"
+    ".nimcache"
+    ".cache"
+    ".direnv"
+    ".next"
+    ".svelte-kit"
+    "dist"
+    "build"
+    "target"
+    "coverage"
+
+fun find-file-root:
+  define:
+    projectPath = (get-active-project-path)
+  if (= projectPath ""):
+    get-home-directory
+  else:
+    projectPath
+
+fun first-path rows:
+  if (empty? rows):
+    ""
+  else:
+    (first rows).path
+
+fun preview-syntax:
+  define:
+    rules = []:
+      span "\"" "\"" (rgb 210 170 110)
+      span "'" "'" (rgb 210 170 110)
+      starts-with "#" (rgb 112 145 118)
+      starts-with "//" (rgb 112 145 118)
+      regex "\\b(proc|func|type|let|var|const|import|from|if|else|elif|case|of|for|while|return|when|template|macro|object|enum)\\b" (rgb 126 190 235)
+  syntax "find-preview" rules
+
+fun file-row item:
+  define:
+    rowID = (id "find-file" "row" item.path)
+  button rowID (string item.relative):
+    width = fill
+    height = fixed 26
+    fontName = "editor"
+    buttonPadding = (insets 6 2 6 2)
+    buttonBorderStyle = ButtonBorderNone
+    buttonChromeStyle = ButtonChromeFlat
+    buttonTextAlign = JustifyStart
+    background = (pick item.selected (color 43 83 106) (color 0 0 0 0))
+    textScroll = true
+  tooltip rowID item.path
+
+widget find-file-panel:
+  define:
+    rootPath = (find-file-root)
+    query = (editorText queryID)
+    rows = (project-files-window rootPath query selectedPath ignoredDirectories)
+    currentPath = (pick (= selectedPath "") (first-path rows) selectedPath)
+    previewText = (file-preview-text currentPath)
+
+  events:
+    setEditorText previewID previewText
+    setEditorSyntax previewID (preview-syntax)
+    when (and (keyPressed "enter") (not (= currentPath ""))):
+      open-file-path currentPath
+      close-floating
+    for item (iter rows):
+      when (clicked (id "find-file" "row" item.path)):
+        set selectedPath item.path
+
+  panel (id "find-file" "panel"):
+    width = fill
+    height = fill
+    padding = 8
+    gap = 8
+    alignItems = AlignStretch
+    background = color 23 27 31
+    lineInput queryID "":
+      width = fill
+      height = fixed 30
+      fontName = "editor"
+    row (id "find-file" "body"):
+      width = fill
+      height = fill
+      gap = 8
+      alignItems = AlignStretch
+      column (id "find-file" "results"):
+        width = fixed 340
+        height = fill
+        gap = 1
+        scrollY = true
+        alignItems = AlignStretch
+        if (empty? rows):
+          label (id "find-file" "empty") "No files":
+            width = fill
+            height = fit
+        else:
+          for item (iter rows):
+            file-row item
+      editor previewID:
+        width = fill
+        height = fill
+        fontName = "editor"
+        lineNumbers = true
+        scrollbars = true
+        readOnly = true
+        syntax = "find-preview"

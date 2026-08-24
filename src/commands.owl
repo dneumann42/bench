@@ -1,5 +1,5 @@
 use nide:
-  include add-project auto-track-opened-projects directory-files dir-exists? file-exists? get-projects open-project path-base-name path-join path-normalize path-parent path-stem pick-project-directory request-action save-projects set-nide-status set-status string text-contains toggle-panel version
+  include add-project auto-track-opened-projects directory-files dir-exists? file-exists? get-projects open-floating-panel open-project path-base-name path-join path-normalize path-parent path-stem pick-project-directory request-action save-projects set-nide-status set-status string text-contains toggle-panel version
 
 fun file-new:
   request-action "new-file"
@@ -20,10 +20,13 @@ fun get-active-buffer-text:
   nide-get "active-buffer-text"
 
 fun buffer-open:
-  define:
-    buffers = get-buffers
+  open-floating-panel "find-buffer"
 
-  set-status (to-string buffers)
+fun find-file:
+  open-floating-panel "find-file"
+
+fun find-buffer:
+  open-floating-panel "find-buffer"
 
 fun file-save:
   define:
