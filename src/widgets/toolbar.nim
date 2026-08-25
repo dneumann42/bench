@@ -419,7 +419,8 @@ widget toolbar*(
             clickedMenuID: menu.id)
     of ToolbarToolControl:
       let tool = control.tool
-      if ui.button(ui.id("tool", model.id, tool.id), tool.label):
+      if ui.button(ui.id("tool", model.id, tool.id), tool.label,
+          buttonVariant = ButtonSmall, fontName = "icon"):
         emit ToolbarEvent(kind: ToolClicked, toolbarID: model.id,
             toolID: tool.id, commandID: tool.commandID)
     of ToolbarWidgetControl:
@@ -456,8 +457,14 @@ widget toolbar*(
     if control.kind == ToolbarMenuControl:
       let menu = control.menu
       if model.openMenu == menu.id:
-        ui.floatingCardBelow(ui.id("popover", model.id, menu.id),
-            ui.id("menu", model.id, menu.id), cfg(width = fixed(180),
+        let
+          menuID = ui.id("menu", model.id, menu.id)
+          popoverID = ui.id("popover", model.id, menu.id)
+        if ui.mouseLeftPressed() and not ui.clickedIn(menuID) and
+            not ui.clickedIn(popoverID):
+          ui.events:
+            model.openMenu = ""
+        ui.floatingCardBelow(popoverID, menuID, cfg(width = fixed(180),
             height = fit(), padding = 4, gap = 2)):
           for item in menu.items:
             ui.menuItem(ui.id("item", model.id, menu.id, item.id),

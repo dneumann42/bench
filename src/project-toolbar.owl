@@ -68,6 +68,14 @@ fun fill-profile-form profile originalName:
   setEditorText checkID (command-text profile "Check")
   setEditorText formatID (command-text profile "Format")
 
+fun reset-profile-form:
+  set editingOriginalName ""
+  setEditorText profileNameID ""
+  setEditorText buildID ""
+  setEditorText runID ""
+  setEditorText checkID ""
+  setEditorText formatID ""
+
 fun open-new-profile-dialog templates:
   define:
     template = (selected-template templates)
@@ -85,7 +93,9 @@ fun profile-task-button project profile kind label:
     button (id "project-toolbar" "task" kind) label:
       width = fit
       height = fit
-      buttonPadding = 8
+      fontName = "icon"
+      buttonVariant = ButtonSmall
+    tooltip (id "project-toolbar" "task" kind) kind
     when (clicked (id "project-toolbar" "task" kind)):
       run-project-profile (dict-get project "name") (dict-get profile "name") kind
 
@@ -103,6 +113,7 @@ fun project-profile-dialog project templates:
       fill-profile-form (selected-template templates) editingOriginalName
     when (clicked cancelID):
       set showProfileDialog false
+      reset-profile-form
     when (clicked saveID):
       save-project-profile
         (dict-get project "name")
@@ -113,6 +124,7 @@ fun project-profile-dialog project templates:
         (editorText checkID)
         (editorText formatID)
       set showProfileDialog false
+      reset-profile-form
 
   modalDialog (id "project-toolbar" "dialog") showProfileDialog:
     width = fixed 520
@@ -240,11 +252,11 @@ widget project-toolbar:
     button editID "Edit":
       width = fit
       height = fit
-      buttonPadding = 8
+      buttonVariant = ButtonSmall
     button newID "New":
       width = fit
       height = fit
-      buttonPadding = 8
+      buttonVariant = ButtonSmall
     if (or (= project nothing) (empty? profiles)):
       label (id "project-toolbar" "empty") "No project":
         width = fixed 120
@@ -253,10 +265,10 @@ widget project-toolbar:
       combobox profilesID selectedProfileIndex labels:
         width = fixed 150
         height = fit
-      profile-task-button project profile "Build" "Build"
-      profile-task-button project profile "Run" "Run"
-      profile-task-button project profile "Check" "Check"
-      profile-task-button project profile "Format" "Format"
+      profile-task-button project profile "Build" ""
+      profile-task-button project profile "Run" ""
+      profile-task-button project profile "Check" ""
+      profile-task-button project profile "Format" ""
 
   when (not (= project nothing)):
     project-profile-dialog project templates

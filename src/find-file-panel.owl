@@ -1,10 +1,15 @@
+import "finder-panel.owl"
+
 use nide:
-  include close-floating file-preview-text get-active-project-path get-home-directory keyPressed open-file-path project-files-window rgb regex span starts-with string syntax
+  include close-floating file-preview-text get-active-project-path get-floating-activation-generation get-home-directory keyPressed open-file-path project-files-window string
 
 state "find-file-panel":
   queryID = (id "find-file" "query")
   previewID = (id "find-file" "preview")
+  resultsID = (id "find-file" "results")
   selectedPath = ""
+  lastActivation = -1
+  pendingFocus = false
   ignoredDirectories = []:
     ".git"
     "node_modules"
@@ -26,21 +31,8 @@ fun find-file-root:
   else:
     projectPath
 
-fun first-path rows:
-  if (empty? rows):
-    ""
-  else:
-    (first rows).path
-
 fun preview-syntax:
-  define:
-    rules = []:
-      span "\"" "\"" (rgb 210 170 110)
-      span "'" "'" (rgb 210 170 110)
-      starts-with "#" (rgb 112 145 118)
-      starts-with "//" (rgb 112 145 118)
-      regex "\\b(proc|func|type|let|var|const|import|from|if|else|elif|case|of|for|while|return|when|template|macro|object|enum)\\b" (rgb 126 190 235)
-  syntax "find-preview" rules
+  finder-preview-syntax "find-preview"
 
 fun file-row item:
   define:
@@ -57,58 +49,65 @@ fun file-row item:
     textScroll = true
   tooltip rowID item.path
 
+fun find-file-select-path path:
+  when (not (= path "")):
+    set selectedPath path
+    finder-scroll-row "find-file" resultsID path
+
+fun find-file-current-path rows:
+  finder-current-key rows selectedPath "path"
+
+fun find-file-current-rows:
+  project-files-window (find-file-root) (editorText queryID) selectedPath ignoredDirectories
+
+fun find-file-previous:
+  define:
+    rows = (find-file-current-rows)
+    currentPath = (find-file-current-path rows)
+  find-file-select-path (finder-previous-key rows currentPath "path")
+
+fun find-file-next:
+  define:
+    rows = (find-file-current-rows)
+    currentPath = (find-file-current-path rows)
+  find-file-select-path (finder-next-key rows currentPath "path")
+
+fun find-file-reset:
+  set selectedPath ""
+  setEditorText queryID ""
+  setEditorText previewID ""
+
 widget find-file-panel:
   define:
+    activation = (get-floating-activation-generation)
     rootPath = (find-file-root)
     query = (editorText queryID)
     rows = (project-files-window rootPath query selectedPath ignoredDirectories)
-    currentPath = (pick (= selectedPath "") (first-path rows) selectedPath)
+    currentPath = (find-file-current-path rows)
     previewText = (file-preview-text currentPath)
 
   events:
+    when (not (= lastActivation activation)):
+      find-file-reset
+      set lastActivation activation
+      set pendingFocus true
+    when pendingFocus:
+      when (not (keyboardInput?)):
+        finder-focus-query queryID
+        set pendingFocus false
     setEditorText previewID previewText
     setEditorSyntax previewID (preview-syntax)
+    finder-list-keybindings "find-file-list" (value-of find-file-previous) (value-of find-file-next)
     when (and (keyPressed "enter") (not (= currentPath ""))):
       open-file-path currentPath
+      find-file-reset
       close-floating
     for item (iter rows):
       when (clicked (id "find-file" "row" item.path)):
-        set selectedPath item.path
+        find-file-select-path item.path
 
-  panel (id "find-file" "panel"):
-    width = fill
-    height = fill
-    padding = 8
-    gap = 8
-    alignItems = AlignStretch
-    background = color 23 27 31
-    lineInput queryID "":
-      width = fill
-      height = fixed 30
-      fontName = "editor"
-    row (id "find-file" "body"):
-      width = fill
-      height = fill
-      gap = 8
-      alignItems = AlignStretch
-      column (id "find-file" "results"):
-        width = fixed 340
-        height = fill
-        gap = 1
-        scrollY = true
-        alignItems = AlignStretch
-        if (empty? rows):
-          label (id "find-file" "empty") "No files":
-            width = fill
-            height = fit
-        else:
-          for item (iter rows):
-            file-row item
-      editor previewID:
-        width = fill
-        height = fill
-        fontName = "editor"
-        lineNumbers = true
-        scrollbars = true
-        readOnly = true
-        syntax = "find-preview"
+  finder-panel "find-file" queryID:
+    finder-results resultsID rows "No files":
+      for item (iter rows):
+        file-row item
+    finder-preview previewID "find-preview"

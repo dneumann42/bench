@@ -7,6 +7,8 @@ use nide/panels:
 use nide:
   include get-current-mode get-status
 
+import "editor-input.owl"
+
 block-command toolbars:
   set-toolbars (list-from (statements block))
 
@@ -34,6 +36,50 @@ fun toolbar-widget id source widget:
 fun toolbar-spacer:
   spacer-value
 
+fun keybinding-mode-labels:
+  []:
+    "VS Code"
+    "Emacs"
+    "Vi"
+
+fun keybinding-mode-values:
+  []:
+    "vscode"
+    "emacs"
+    "vi"
+
+fun keybinding-mode-index:
+  cond:
+    when (= editorInputDriver "vscode"):
+      0
+    when (= editorInputDriver "vi"):
+      2
+    when true:
+      1
+
+fun keybinding-mode-control:
+  define:
+    picked = nothing
+    values = (keybinding-mode-values)
+  events:
+    set picked (combobox (id "statusbar" "keybindings") (keybinding-mode-index) (keybinding-mode-labels))
+    when (not (= picked nothing)):
+      set editorInputDriver (nth values picked)
+      if (= editorInputDriver "vi"):
+        vi-normal-mode
+      else:
+        set-editor-line-cursor
+  combobox (id "statusbar" "keybindings") (keybinding-mode-index) (keybinding-mode-labels):
+    width = fixed 112
+    height = fit
+
+fun dialog-list-keybindings previousCommand nextCommand:
+  keymap:
+    key "up" previousCommand
+    ctrl "p" previousCommand
+    key "down" nextCommand
+    ctrl "n" nextCommand
+
 fun file-menu:
   toolbar-menu "file" "File":
     toolbar-item "file.newFile" "New File" "file-new"
@@ -58,12 +104,12 @@ toolbars:
     toolbar-widget "project-toolbar" "project-toolbar.owl" "project-toolbar"
 
   toolbar "pane-tools" "left":
-    toolbar-tool "toggleProjectsPanel" "P" "toggle-projects-panel"
-    toolbar-tool "toggleFileExplorerPanel" "E" "toggle-file-explorer-panel"
+    toolbar-tool "toggleProjectsPanel" "" "toggle-projects-panel"
+    toolbar-tool "toggleFileExplorerPanel" "" "toggle-file-explorer-panel"
     toolbar-spacer
-    toolbar-tool "splitColumn" "=" "pane-split-column"
-    toolbar-tool "splitRow" "%" "pane-split-row"
-    toolbar-tool "unsplit" "x" "pane-unsplit"
+    toolbar-tool "splitColumn" "" "pane-split-column"
+    toolbar-tool "splitRow" "" "pane-split-row"
+    toolbar-tool "unsplit" "" "pane-unsplit"
 
 panels:
   dock-panel "projects" "Projects" "left" "projects-panel.owl" "projects-panel" false 280
@@ -83,6 +129,8 @@ statusbar:
   label (id "statusbar" "mode") (get-current-mode):
     width = fit
     height = fit
+
+  keybinding-mode-control
 
   button (id "statusbar" "git") "Git":
     set-status "Git is not implemented"

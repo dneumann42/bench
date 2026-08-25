@@ -1,0 +1,86 @@
+import "core.owl"
+
+state "nide-vi-editor-input":
+  viMode = "normal"
+
+fun vi-insert-mode:
+  set viMode "insert"
+  set-editor-line-cursor
+
+fun vi-normal-mode:
+  set viMode "normal"
+  set-editor-block-cursor
+
+fun vi-append-mode:
+  editor-forward-char
+  vi-insert-mode
+
+fun vi-open-line-below:
+  editor-line-end
+  editor-newline
+  vi-insert-mode
+
+fun vi-open-line-above:
+  editor-line-start
+  editor-newline
+  editor-previous-line
+  vi-insert-mode
+
+fun vi-delete-char:
+  editor-delete-forward
+
+fun vi-insert-text:
+  if (= viMode "insert"):
+    editor-insert-frame-text
+  else:
+    nothing
+
+fun vi-bindings:
+  if (= viMode "insert"):
+    keymap:
+      key "escape" vi-normal-mode
+      key "left" editor-backward-char
+      key "right" editor-forward-char
+      key "up" editor-previous-line
+      key "down" editor-next-line
+      key "backspace" editor-delete-backward
+      key "delete" editor-delete-forward
+      key "enter" editor-newline
+  else:
+    keymap:
+      key "escape" vi-normal-mode
+      key "left" editor-backward-char
+      key "right" editor-forward-char
+      key "up" editor-previous-line
+      key "down" editor-next-line
+      key "h" editor-backward-char
+      key "l" editor-forward-char
+      key "k" editor-previous-line
+      key "j" editor-next-line
+      key "0" editor-line-start
+      key "home" editor-line-start
+      key "end" editor-line-end
+      key "w" editor-forward-word
+      key "b" editor-backward-word
+      key "i" vi-insert-mode
+      key "a" vi-append-mode
+      key "o" vi-open-line-below
+      shift "o" vi-open-line-above
+      key "x" vi-delete-char
+      key "backspace" editor-delete-backward
+      key "delete" editor-delete-forward
+      ctrl "u" editor-kill-line-start
+      ctrl "r" editor-redo
+
+fun vi-editor-driver:
+  when (= viMode "normal"):
+    when (not (= (get-active-editor-cursor-style) "block")):
+      set-editor-block-cursor
+  when (= viMode "insert"):
+    when (not (= (get-active-editor-cursor-style) "line")):
+      set-editor-line-cursor
+  EditorInputDriver:
+    name = "vi"
+    mode = viMode
+    textCommand = (value-of vi-insert-text)
+    bindings = (vi-bindings)

@@ -1,5 +1,5 @@
 use nide:
-  include add-project auto-track-opened-projects directory-files dir-exists? file-exists? get-projects open-floating-panel open-project path-base-name path-join path-normalize path-parent path-stem pick-project-directory request-action save-projects set-nide-status set-status string text-contains toggle-panel version
+  include add-project auto-track-opened-projects directory-files dir-exists? file-exists? get-projects open-build-launch-tab open-check-launch-tab open-floating-panel open-project open-run-launch-tab path-base-name path-join path-normalize path-parent path-stem pick-project-directory request-action save-projects set-nide-status set-process-launch-tab set-status string text-contains toggle-panel version
 
 fun file-new:
   request-action "new-file"
@@ -9,6 +9,15 @@ fun file-open:
 
 fun nide-get key:
   dict-get nide-state key
+
+fun set-build-launch-tab open:
+  set-process-launch-tab "build" open
+
+fun set-run-launch-tab open:
+  set-process-launch-tab "run" open
+
+fun set-check-launch-tab open:
+  set-process-launch-tab "check" open
 
 fun get-buffers:
   nide-get "buffers"

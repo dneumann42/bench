@@ -75,11 +75,31 @@ proc stateSnapshot*(
     bufferIDs: openArray[string],
     activeBufferPath,
     activeBufferText: string,
+    activeBufferID = "",
+    activeEditorCursor = 0,
+    activeEditorLine = 1,
+    activeEditorColumn = 1,
+    activeEditorSelectionStart = 0,
+    activeEditorSelectionStop = 0,
+    activeEditorHasSelection = false,
+    activeEditorSelectedText = "",
+    activeEditorInputDriver = "",
+    activeEditorCursorStyle = "line",
 ): Value =
   var entries = initTable[string, Value]()
   entries["buffers"] = textList(bufferIDs)
+  entries["active-buffer-id"] = text(activeBufferID)
   entries["active-buffer-path"] = text(activeBufferPath)
   entries["active-buffer-text"] = text(activeBufferText)
+  entries["active-editor-cursor"] = number(activeEditorCursor.float64)
+  entries["active-editor-line"] = number(activeEditorLine.float64)
+  entries["active-editor-column"] = number(activeEditorColumn.float64)
+  entries["active-editor-selection-start"] = number(activeEditorSelectionStart.float64)
+  entries["active-editor-selection-stop"] = number(activeEditorSelectionStop.float64)
+  entries["active-editor-has-selection"] = boolean(activeEditorHasSelection)
+  entries["active-editor-selected-text"] = text(activeEditorSelectedText)
+  entries["active-editor-input-driver"] = text(activeEditorInputDriver)
+  entries["active-editor-cursor-style"] = text(activeEditorCursorStyle)
   dictionary(entries)
 
 proc readText*(env: Environment, name: string): string =
@@ -1025,11 +1045,35 @@ proc registerInternalCommands*(evaluator: var Evaluator,
   nide.defineBridgeGetter("get-active-project-path", "active-project-path", bridge)
   nide.defineBridgeGetter("get-home-directory", "home-directory", bridge)
   nide.defineBridgeGetter("get-panels", "panels", bridge)
+  nide.defineBridgeGetter("get-floating-activation-generation",
+      "floating-activation-generation", bridge)
   nide.defineBridgeGetter("get-buffers", "buffers", bridge)
   nide.defineBridgeGetter("get-buffer-preview-text", "buffer-preview-text", bridge)
   nide.defineBridgeGetter("get-current-mode", "active-buffer-mode", bridge)
+  nide.defineBridgeGetter("get-active-buffer-id", "active-buffer-id", bridge)
+  nide.defineBridgeGetter("get-active-buffer-path", "active-buffer-path", bridge)
+  nide.defineBridgeGetter("get-active-editor-text-length",
+      "active-editor-text-length", bridge)
+  nide.defineBridgeGetter("get-active-editor-cursor", "active-editor-cursor", bridge)
+  nide.defineBridgeGetter("get-active-editor-line", "active-editor-line", bridge)
+  nide.defineBridgeGetter("get-active-editor-column", "active-editor-column", bridge)
+  nide.defineBridgeGetter("get-active-editor-selection-start",
+      "active-editor-selection-start", bridge)
+  nide.defineBridgeGetter("get-active-editor-selection-stop",
+      "active-editor-selection-stop", bridge)
+  nide.defineBridgeGetter("get-active-editor-has-selection",
+      "active-editor-has-selection", bridge)
+  nide.defineBridgeGetter("get-active-editor-selected-text",
+      "active-editor-selected-text", bridge)
+  nide.defineBridgeGetter("get-active-editor-input-driver",
+      "active-editor-input-driver", bridge)
+  nide.defineBridgeGetter("get-active-editor-cursor-style",
+      "active-editor-cursor-style", bridge)
   nide.defineBridgeGetter("auto-track-opened-projects",
       "auto-track-opened-projects", bridge)
+  nide.defineBridgeGetter("open-build-launch-tab", "open-build-launch-tab", bridge)
+  nide.defineBridgeGetter("open-run-launch-tab", "open-run-launch-tab", bridge)
+  nide.defineBridgeGetter("open-check-launch-tab", "open-check-launch-tab", bridge)
   nide.defineBridgeRequest("open-project", "project.open", bridge, [1])
   nide.defineBridgeRequest("pick-project-directory", "project.pick-directory",
       bridge, [0])
@@ -1038,6 +1082,8 @@ proc registerInternalCommands*(evaluator: var Evaluator,
       bridge, [7])
   nide.defineBridgeRequest("run-project-profile", "project.profile.run",
       bridge, [3])
+  nide.defineBridgeRequest("set-process-launch-tab", "process.launch-tab.set",
+      bridge, [2])
   nide.defineBridgeRequest("unload-project", "project.unload", bridge, [0])
   nide.defineBridgeRequest("reload-projects", "projects.reload", bridge, [0])
   nide.defineBridgeRequest("save-projects", "projects.save", bridge, [0])
@@ -1057,6 +1103,8 @@ proc registerInternalCommands*(evaluator: var Evaluator,
   nide.defineBridgeRequest("set-editor-syntax", "buffer.set-syntax", bridge, [1])
   nide.defineBridgeRequest("clear-editor-syntax", "buffer.clear-syntax", bridge, [0])
   nide.defineBridgeRequest("set-mode-hook", "buffer.set-mode-hook", bridge, [2])
+  nide.defineBridgeRequest("active-editor-command", "active-editor.command",
+      bridge, [1, 2, 3])
   nide.defineFileSystemCommands()
   nide.defineFileExplorerCommands(bridge)
   nide.defineStringCommand()

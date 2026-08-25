@@ -1,10 +1,15 @@
+import "finder-panel.owl"
+
 use nide:
-  include close-floating get-buffer-preview-text get-buffers keyPressed kill-buffer preview-buffer rgb regex span starts-with string switch-buffer syntax text-contains
+  include close-floating get-buffer-preview-text get-buffers get-floating-activation-generation keyPressed kill-buffer preview-buffer string switch-buffer text-contains
 
 state "find-buffer-panel":
   queryID = (id "find-buffer" "query")
   previewID = (id "find-buffer" "preview")
+  resultsID = (id "find-buffer" "results")
   selectedID = ""
+  lastActivation = -1
+  pendingFocus = false
 
 fun buffer-matches? item query:
   or (text-contains item.name query true) (text-contains item.path query true)
@@ -17,12 +22,6 @@ fun visible-buffers buffers query:
       append output item
   output
 
-fun first-buffer-id rows:
-  if (empty? rows):
-    ""
-  else:
-    (first rows).id
-
 fun selected-buffer rows selected:
   cond:
     when (empty? rows):
@@ -33,16 +32,9 @@ fun selected-buffer rows selected:
       selected-buffer (rest rows) selected
 
 fun buffer-preview-syntax:
-  define:
-    rules = []:
-      span "\"" "\"" (rgb 210 170 110)
-      span "'" "'" (rgb 210 170 110)
-      starts-with "#" (rgb 112 145 118)
-      starts-with "//" (rgb 112 145 118)
-      regex "\\b(proc|func|type|let|var|const|import|from|if|else|elif|case|of|for|while|return|when|template|macro|object|enum)\\b" (rgb 126 190 235)
-  syntax "buffer-preview" rules
+  finder-preview-syntax "buffer-preview"
 
-fun buffer-row item:
+fun buffer-row item currentID:
   define:
     rowID = (id "find-buffer" "row" item.id)
     killID = (id "find-buffer" "kill" item.id)
@@ -58,73 +50,80 @@ fun buffer-row item:
       buttonBorderStyle = ButtonBorderNone
       buttonChromeStyle = ButtonChromeFlat
       buttonTextAlign = JustifyStart
-      background = (pick (= item.id selectedID) (color 43 83 106) (color 0 0 0 0))
+      background = (pick (= item.id currentID) (color 43 83 106) (color 0 0 0 0))
       textScroll = true
-    button killID "×":
+    button killID "":
       width = fixed 28
       height = fixed 28
-      fontName = "editor"
-      buttonPadding = 0
+      fontName = "icon"
+      buttonVariant = ButtonIcon
   tooltip rowID (pick (= item.path "") item.name item.path)
   tooltip killID "Kill buffer"
 
+fun find-buffer-select-id bufferID:
+  when (not (= bufferID "")):
+    set selectedID bufferID
+    preview-buffer bufferID
+    finder-scroll-row "find-buffer" resultsID bufferID
+
+fun find-buffer-current-rows:
+  visible-buffers (get-buffers) (editorText queryID)
+
+fun find-buffer-current-id rows:
+  finder-current-key rows selectedID "id"
+
+fun find-buffer-previous:
+  define:
+    rows = (find-buffer-current-rows)
+    currentID = (find-buffer-current-id rows)
+  find-buffer-select-id (finder-previous-key rows currentID "id")
+
+fun find-buffer-next:
+  define:
+    rows = (find-buffer-current-rows)
+    currentID = (find-buffer-current-id rows)
+  find-buffer-select-id (finder-next-key rows currentID "id")
+
+fun find-buffer-reset:
+  set selectedID ""
+  setEditorText queryID ""
+  setEditorText previewID ""
+
 widget find-buffer-panel:
   define:
+    activation = (get-floating-activation-generation)
     query = (editorText queryID)
     rows = (visible-buffers (get-buffers) query)
-    currentID = (pick (= selectedID "") (first-buffer-id rows) selectedID)
+    currentID = (find-buffer-current-id rows)
     current = (selected-buffer rows currentID)
     previewText = (get-buffer-preview-text)
 
   events:
+    when (not (= lastActivation activation)):
+      find-buffer-reset
+      set lastActivation activation
+      set pendingFocus true
+    when pendingFocus:
+      when (not (keyboardInput?)):
+        finder-focus-query queryID
+        set pendingFocus false
     setEditorText previewID previewText
     setEditorSyntax previewID (buffer-preview-syntax)
+    finder-list-keybindings "find-buffer-list" (value-of find-buffer-previous) (value-of find-buffer-next)
     when (and (keyPressed "enter") (not (= currentID ""))):
       switch-buffer currentID
+      find-buffer-reset
       close-floating
     for item (iter rows):
       when (clicked (id "find-buffer" "row" item.id)):
-        set selectedID item.id
-        preview-buffer item.id
+        find-buffer-select-id item.id
       when (clicked (id "find-buffer" "kill" item.id)):
         kill-buffer item.id
         when (= selectedID item.id):
           set selectedID ""
 
-  panel (id "find-buffer" "panel"):
-    width = fill
-    height = fill
-    padding = 8
-    gap = 8
-    alignItems = AlignStretch
-    background = color 23 27 31
-    lineInput queryID "":
-      width = fill
-      height = fixed 30
-      fontName = "editor"
-    row (id "find-buffer" "body"):
-      width = fill
-      height = fill
-      gap = 8
-      alignItems = AlignStretch
-      column (id "find-buffer" "results"):
-        width = fixed 340
-        height = fill
-        gap = 1
-        scrollY = true
-        alignItems = AlignStretch
-        if (empty? rows):
-          label (id "find-buffer" "empty") "No buffers":
-            width = fill
-            height = fit
-        else:
-          for item (iter rows):
-            buffer-row item
-      editor previewID:
-        width = fill
-        height = fill
-        fontName = "editor"
-        lineNumbers = true
-        scrollbars = true
-        readOnly = true
-        syntax = "buffer-preview"
+  finder-panel "find-buffer" queryID:
+    finder-results resultsID rows "No buffers":
+      for item (iter rows):
+        buffer-row item currentID
+    finder-preview previewID "buffer-preview"

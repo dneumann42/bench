@@ -1,9 +1,11 @@
-import std/[algorithm, os, osproc, sets, streams, strutils, tables]
+import std/[algorithm, math, os, osproc, posix, sets, streams, strutils, tables]
 
 import nest, owl
 import nest/dialogs
 import nest/errorDialogs
 import nest/owldsl
+import nest/resources
+import nest/screen
 import sdl3
 
 import buffers, commands, modes, panes, projects
@@ -22,6 +24,7 @@ const
   NideConfigDirName = "nide"
   NideProjectsFileName = "projects.owl"
   NideConfigFileName = "config.owl"
+  NideKeybindingsFileName = "keybindings.owl"
 
 type
   PendingFileAction = enum
@@ -33,6 +36,47 @@ type
     callback: proc(path: string)
 
   NideRequestHandler = proc(model: var Nide, request: NideBridgeRequest)
+
+  ProcessJobStatus = enum
+    ProcessRunning
+    ProcessSucceeded
+    ProcessFailed
+    ProcessKilled
+
+  ProcessJob = object
+    id: string
+    kind: ProjectProfileCommandKind
+    projectName: string
+    profileName: string
+    directoryPath: string
+    command: string
+    process: osproc.Process
+    output: EditorState
+    status: ProcessJobStatus
+    exitCode: int
+    cardDismissed: bool
+    outputNonBlocking: bool
+    spinnerFrame: int
+
+  ProcessSpinner = ref object of Component
+    running: bool
+    ok: bool
+    frame: int
+
+  ActiveEditorSnapshot = object
+    bufferID: string
+    bufferPath: string
+    bufferText: string
+    textLength: int
+    cursor: int
+    line: int
+    column: int
+    selectionStart: int
+    selectionStop: int
+    hasSelection: bool
+    selectedText: string
+    inputDriver: string
+    cursorStyle: string
 
   Nide = object
     evaluator: Evaluator
@@ -54,13 +98,76 @@ type
     floatingOpen: bool
     floatingTab: int
     floatingTabKey: string
+    floatingActivationGeneration: int
     floatingWidth: float64
     floatingHeight: float64
     bufferPreviewID: BufferID
+    processJobs: seq[ProcessJob]
+    nextProcessJob: int
+    activeProcessJobID: string
+    openBuildLaunchTab: bool
+    openRunLaunchTab: bool
+    openCheckLaunchTab: bool
     needsRedraw: bool
     pendingFileAction: PendingFileAction
     pendingPath: string
+    pendingEditorFocus: BufferID
     status: string
+
+const SpinnerSize = 18
+
+proc new(T: typedesc[ProcessSpinner], running, ok: bool, frame = 0): T =
+  T(running: running, ok: ok, frame: frame)
+
+method measure*(self: ProcessSpinner, resources: Resources): IntrinsicSize =
+  discard self
+  discard resources
+  intrinsicSize(SpinnerSize.float64, SpinnerSize.float64)
+
+method draw*(self: ProcessSpinner, widget: Widget, ctx: var DrawContext) =
+  let
+    f = widget.frame
+    x = f.x.toInt
+    y = f.y.toInt
+    w = max(f.width.toInt, 1)
+    h = max(f.height.toInt, 1)
+    cx = x + w div 2
+    cy = y + h div 2
+    radius = min(w, h) div 2 - 2
+  if radius <= 0:
+    return
+
+  if self.running:
+    const Steps = 12
+    let active = self.frame mod Steps
+    for step in 0 ..< Steps:
+      let
+        alpha = uint8((80 + ((step + Steps - active) mod Steps) * 15).clamp(0, 240))
+        angle = (step.float64 / Steps.float64) * 2.0 * PI
+        px = cx + (cos(angle) * radius.float64).round.int
+        py = cy + (sin(angle) * radius.float64).round.int
+        dotSize = if step == active: 4 else: 3
+      fillRect(rect(px - dotSize div 2, py - dotSize div 2, dotSize, dotSize),
+          color(156, 226, 198, alpha))
+    ctx.requestRedrawAfter(16)
+  elif self.ok:
+    drawLine(cx - 6, cy, cx - 2, cy + 5, color(125, 206, 176))
+    drawLine(cx - 2, cy + 5, cx + 7, cy - 6, color(125, 206, 176))
+    drawLine(cx - 6, cy + 1, cx - 2, cy + 6, color(125, 206, 176))
+    drawLine(cx - 2, cy + 6, cx + 7, cy - 5, color(125, 206, 176))
+  else:
+    drawLine(cx - 6, cy - 6, cx + 6, cy + 6, color(230, 108, 108))
+    drawLine(cx + 6, cy - 6, cx - 6, cy + 6, color(230, 108, 108))
+    drawLine(cx - 6, cy - 5, cx + 6, cy + 7, color(230, 108, 108))
+    drawLine(cx + 6, cy - 5, cx - 6, cy + 7, color(230, 108, 108))
+
+proc processSpinner(ui: var UI, id: WidgetID, running, ok: bool, frame = 0) =
+  if running:
+    ui.markRealtime(id)
+  discard ui.component(id, Component(ProcessSpinner.new(running, ok, frame)),
+      fixed(SpinnerSize.float64), fixed(SpinnerSize.float64),
+      renderKeyOverride = "process-spinner:" & $running & ":" & $ok & ":" &
+        $frame)
 
 var pendingSaveDialogs: seq[SaveDialogRequest]
 var pickedFileAction: PendingFileAction
@@ -110,6 +217,8 @@ proc init(T: typedesc[Nide]): T =
       floatingTab: 0,
       floatingWidth: 1040.0,
       floatingHeight: 680.0,
+      processJobs: @[],
+      nextProcessJob: 1,
       status: "Ready")
   result.uiRuntime = uiRuntime
   result.owlErrorApp = NestOwlApp(rootPath: NideSourceDir / "load.owl",
@@ -141,6 +250,9 @@ proc nideProjectsPath(): string =
 proc nideConfigPath(): string =
   nideConfigDir() / NideConfigFileName
 
+proc nideKeybindingsPath(): string =
+  nideConfigDir() / NideKeybindingsFileName
+
 proc ensureNideUserFiles(model: var Nide) =
   let dir = nideConfigDir()
   createDir(dir)
@@ -156,7 +268,60 @@ proc ensureNideUserFiles(model: var Nide) =
 
   let configPath = nideConfigPath()
   if not fileExists(configPath):
-    writeFile(configPath, "; Nide user config\n")
+    writeFile(configPath, """; Nide user config.
+; Per-frame keyboard config belongs in keybindings.owl.
+
+; Build, run, and check show the small process card by default.
+; Set any of these to true to also open its launch tab automatically.
+set-build-launch-tab false
+set-run-launch-tab false
+set-check-launch-tab false
+
+; Override dialog list navigation by redefining dialog-list-keybindings.
+; The default binds Up/Ctrl-P to previous and Down/Ctrl-N to next:
+; fun dialog-list-keybindings previousCommand nextCommand:
+;   keymap:
+;     key "up" previousCommand
+;     ctrl "p" previousCommand
+;     key "down" nextCommand
+;     ctrl "n" nextCommand
+""")
+
+  let keybindingsPath = nideKeybindingsPath()
+  if not fileExists(keybindingsPath):
+    writeFile(keybindingsPath, "import \"" & (NideSourceDir / "editor-input.owl") & "\"\n" & """
+
+; Choose "emacs", "vscode", or "vi".
+set editorInputDriver "emacs"
+
+widget nide-user-keybindings:
+  events:
+    nothing
+""")
+
+proc processLaunchTabSetting(model: Nide,
+    kind: ProjectProfileCommandKind): bool =
+  case kind
+  of Build:
+    model.openBuildLaunchTab
+  of Run:
+    model.openRunLaunchTab
+  of Check:
+    model.openCheckLaunchTab
+  of Format:
+    false
+
+proc setProcessLaunchTabSetting(model: var Nide,
+    kind: ProjectProfileCommandKind, open: bool) =
+  case kind
+  of Build:
+    model.openBuildLaunchTab = open
+  of Run:
+    model.openRunLaunchTab = open
+  of Check:
+    model.openCheckLaunchTab = open
+  of Format:
+    discard
 
 proc loadProjectManager(model: var Nide) =
   let path = nideProjectsPath()
@@ -194,8 +359,265 @@ proc activeBufferID(model: Nide): BufferID =
     return InvalidBufferID
   model.panes.panes[paneID].bufferID
 
+proc activeEditorSnapshot(model: Nide, includeText = false): ActiveEditorSnapshot =
+  result.line = 1
+  result.column = 1
+  let id = model.activeBufferID()
+  if not model.buffers.hasBuffer(id):
+    return
+
+  let buffer = model.buffers.buffers[id]
+  result.bufferID = string(id)
+  result.bufferPath = buffer.path
+  result.textLength = buffer.editor.text.len
+  if includeText:
+    result.bufferText = buffer.editor.text
+  result.cursor = buffer.editor.cursor
+  let lineColumn = buffer.editor.lineColumn()
+  result.line = lineColumn.line
+  result.column = lineColumn.column
+  let selection = buffer.editor.selectionRange()
+  result.selectionStart = selection.first
+  result.selectionStop = selection.last
+  result.hasSelection = buffer.editor.hasSelection()
+  result.selectedText = buffer.editor.selectedText()
+  result.inputDriver = buffer.editor.inputDriver
+  result.cursorStyle =
+    case buffer.editor.cursorStyle
+    of EditorBlockCursor: "block"
+    of EditorLineCursor: "line"
+
 proc requestFrame(model: var Nide) =
   model.needsRedraw = true
+
+proc processJobKey(id: string): string =
+  "process:" & id
+
+proc processJobTitle(job: ProcessJob): string =
+  job.kind.commandKindName() & " " & job.profileName
+
+proc processJobStatusText(job: ProcessJob): string =
+  case job.status
+  of ProcessRunning:
+    "Running"
+  of ProcessSucceeded:
+    "Succeeded"
+  of ProcessFailed:
+    "Failed (" & $job.exitCode & ")"
+  of ProcessKilled:
+    "Killed"
+
+proc appendOutput(job: var ProcessJob, chunk: string) =
+  if chunk.len == 0:
+    return
+  job.output.text.add chunk
+  job.output.cursor = job.output.text.len
+  job.output.selectionAnchor = -1
+  job.output.ensureCursorVisible = true
+  job.output.touchText()
+
+proc setProcessOutputNonBlocking(job: var ProcessJob) =
+  if job.process.isNil or job.outputNonBlocking:
+    return
+  try:
+    let handle = cint(job.process.outputHandle())
+    let flags = posix.fcntl(handle, F_GETFL)
+    if flags >= 0:
+      discard posix.fcntl(handle, F_SETFL, flags or O_NONBLOCK)
+      job.outputNonBlocking = true
+  except CatchableError:
+    discard
+
+proc drainProcessOutput(job: var ProcessJob): bool =
+  if job.process.isNil:
+    return false
+  job.setProcessOutputNonBlocking()
+  var buffer: array[8192, char]
+  for _ in 0 ..< 16:
+    let count = posix.read(cint(job.process.outputHandle()), addr buffer[0],
+        buffer.len)
+    if count <= 0:
+      break
+    var chunk = newStringOfCap(count)
+    for index in 0 ..< count:
+      chunk.add buffer[index]
+    job.appendOutput(chunk)
+    result = true
+
+proc finishProcessJob(job: var ProcessJob, exitCode: int) =
+  job.exitCode = exitCode
+  if job.status == ProcessRunning:
+    job.status =
+      if exitCode == 0: ProcessSucceeded else: ProcessFailed
+  if not job.process.isNil:
+    try:
+      job.process.close()
+    except CatchableError:
+      discard
+    job.process = nil
+
+proc pollProcessJobs(model: var Nide) =
+  var changed = false
+  for job in model.processJobs.mitems:
+    if job.status != ProcessRunning:
+      continue
+    inc job.spinnerFrame
+    changed = true
+    if job.drainProcessOutput():
+      changed = true
+    if not job.process.isNil:
+      let exitCode =
+        try:
+          job.process.peekExitCode()
+        except CatchableError:
+          -1
+      if exitCode >= 0:
+        discard job.drainProcessOutput()
+        job.finishProcessJob(exitCode)
+        changed = true
+  if changed:
+    model.requestFrame()
+
+proc processJobIndex(model: Nide, id: string): int =
+  for index, job in model.processJobs:
+    if job.id == id:
+      return index
+  -1
+
+proc reusableProcessJobIndex(model: Nide, kind: ProjectProfileCommandKind): int =
+  if kind notin {Build, Run}:
+    return -1
+  for index, job in model.processJobs:
+    if job.kind == kind:
+      return index
+  -1
+
+proc hasRunningProcessJob(model: Nide): bool =
+  for job in model.processJobs:
+    if job.status == ProcessRunning:
+      return true
+
+proc openProcessJob(model: var Nide, id: string) =
+  let index = model.processJobIndex(id)
+  if index < 0:
+    return
+  model.activeProcessJobID = id
+  model.floatingOpen = true
+  model.floatingTabKey = processJobKey(id)
+  inc model.floatingActivationGeneration
+  model.requestFrame()
+
+proc killProcessJob(job: var ProcessJob) =
+  if job.status != ProcessRunning:
+    return
+  job.status = ProcessKilled
+  job.exitCode = 143
+  if not job.process.isNil:
+    try:
+      let pid = job.process.processID()
+      if pid > 0:
+        discard posix.kill(Pid(-pid), SIGTERM)
+    except CatchableError:
+      discard
+    try:
+      job.process.terminate()
+    except CatchableError:
+      discard
+    try:
+      discard job.process.waitForExit(0)
+    except CatchableError:
+      discard
+    discard job.drainProcessOutput()
+    try:
+      job.process.close()
+    except CatchableError:
+      discard
+    job.process = nil
+  job.appendOutput("\n[process killed]\n")
+
+proc launchProcessJob(job: var ProcessJob): string =
+  job.process = nil
+  job.output = EditorState.new("")
+  job.status = ProcessRunning
+  job.exitCode = -1
+  job.cardDismissed = false
+  job.outputNonBlocking = false
+  job.spinnerFrame = 0
+  job.appendOutput("$ " & job.command & "\n\n")
+  try:
+    try:
+      job.process = osproc.startProcess("setsid", args = @["sh", "-lc",
+          job.command], workingDir = job.directoryPath, options = {poUsePath,
+          poStdErrToStdOut})
+    except CatchableError:
+      job.process = osproc.startProcess("sh", args = @["-lc", job.command],
+          workingDir = job.directoryPath, options = {poUsePath, poStdErrToStdOut})
+    job.setProcessOutputNonBlocking()
+  except CatchableError as error:
+    job.status = ProcessFailed
+    job.exitCode = 127
+    job.appendOutput("Failed to start: " & error.msg & "\n")
+    return error.msg
+
+proc startProcessJob(
+    model: var Nide,
+    kind: ProjectProfileCommandKind,
+    projectName, profileName, directoryPath, command: string,
+) =
+  var index = model.reusableProcessJobIndex(kind)
+  var id: string
+  if index >= 0:
+    id = model.processJobs[index].id
+  else:
+    id = $model.nextProcessJob
+    inc model.nextProcessJob
+  var job = ProcessJob(
+    id: id,
+    kind: kind,
+    projectName: projectName,
+    profileName: profileName,
+    directoryPath: directoryPath,
+    command: command,
+  )
+  if index >= 0 and model.processJobs[index].status == ProcessRunning:
+    model.processJobs[index].killProcessJob()
+  let startError = job.launchProcessJob()
+  if startError.len == 0:
+    model.status = kind.commandKindName() & " started: " & command
+  else:
+    model.status = kind.commandKindName() & " failed to start: " & command
+  if index >= 0:
+    model.processJobs[index] = job
+  else:
+    model.processJobs.add job
+  if model.processLaunchTabSetting(kind):
+    model.openProcessJob(id)
+  else:
+    model.requestFrame()
+
+proc restartProcessJob(model: var Nide, index: int) =
+  if index < 0 or index >= model.processJobs.len:
+    return
+  let previous = model.processJobs[index]
+  if model.processJobs[index].status == ProcessRunning:
+    model.processJobs[index].killProcessJob()
+  var job = ProcessJob(
+    id: previous.id,
+    kind: previous.kind,
+    projectName: previous.projectName,
+    profileName: previous.profileName,
+    directoryPath: previous.directoryPath,
+    command: previous.command,
+  )
+  let startError = job.launchProcessJob()
+  model.processJobs[index] = job
+  if startError.len == 0:
+    model.status = previous.kind.commandKindName() & " restarted: " &
+        previous.command
+  else:
+    model.status = previous.kind.commandKindName() & " failed to restart: " &
+        previous.command
+  model.requestFrame()
 
 proc queueOpenFile(model: var Nide, path: string) =
   if path.len == 0:
@@ -237,20 +659,26 @@ proc newFile(model: var Nide) =
   model.requestFrame()
 
 proc openFile(model: var Nide, path: string) =
-  let id = model.activeBufferID()
-  if id == InvalidBufferID:
+  var targetPane = model.activeEditorPane()
+  if targetPane == InvalidPaneID or targetPane notin model.panes.panes:
+    targetPane = model.panes.firstLeaf(model.panes.rootPane)
+  if targetPane == InvalidPaneID:
     model.status = "Open failed: no focused editor pane"
     return
+  model.panes.focus(targetPane)
+  model.lastFocusedEditorPane = targetPane
   try:
     let existingID = model.buffers.findByPath(path)
     if existingID != InvalidBufferID:
       model.panes.setActiveBuffer(existingID)
+      model.pendingEditorFocus = existingID
       model.status = "Opened " & path
       model.requestFrame()
       return
     let newID = model.buffers.openBuffer(path)
     model.panes.setActiveBuffer(newID)
     model.applyFileMode(newID)
+    model.pendingEditorFocus = newID
     model.status = "Opened " & path
     model.requestFrame()
   except CatchableError as error:
@@ -288,12 +716,14 @@ proc markActiveBufferSaved(model: var Nide) =
 proc splitColumn(model: var Nide) =
   let bufferID = model.buffers.newScratchBuffer()
   discard model.panes.addColumn(bufferID)
+  model.panes.setActiveBuffer(bufferID)
   model.status = "Split column"
   model.requestFrame()
 
 proc splitRow(model: var Nide) =
   let bufferID = model.buffers.newScratchBuffer()
   discard model.panes.addRow(bufferID)
+  model.panes.setActiveBuffer(bufferID)
   model.status = "Split row"
   model.requestFrame()
 
@@ -324,17 +754,21 @@ proc bufferIDs(model: Nide): seq[string] =
   result.sort()
 
 proc resetCommandBindings(model: var Nide) =
-  var activeBufferPath = ""
-  var activeBufferText = ""
-  let active = model.activeBufferID()
-  if model.buffers.hasBuffer(active):
-    let buffer = model.buffers.buffers[active]
-    activeBufferPath = buffer.path
-    activeBufferText = buffer.editor.text
+  let editor = model.activeEditorSnapshot(includeText = true)
   model.evaluator.env.bindValue(VarState, stateSnapshot(
     model.bufferIDs(),
-    activeBufferPath,
-    activeBufferText,
+    editor.bufferPath,
+    editor.bufferText,
+    editor.bufferID,
+    editor.cursor,
+    editor.line,
+    editor.column,
+    editor.selectionStart,
+    editor.selectionStop,
+    editor.hasSelection,
+    editor.selectedText,
+    editor.inputDriver,
+    editor.cursorStyle,
   ))
   model.evaluator.env.bindText(VarStatus, model.status)
 
@@ -405,6 +839,7 @@ proc togglePanel(model: var Nide, target: string): bool =
       if panel.dock == PanelFloating and panel.open:
         model.floatingOpen = true
         model.floatingTabKey = "panel:" & panel.id
+        inc model.floatingActivationGeneration
       model.status =
         if panel.open: panel.title & " panel opened" else: panel.title & " panel closed"
       model.requestFrame()
@@ -417,6 +852,7 @@ proc openFloatingPanel(model: var Nide, target: string): bool =
       panel.open = true
       model.floatingOpen = true
       model.floatingTabKey = "panel:" & panel.id
+      inc model.floatingActivationGeneration
       model.status = panel.title & " opened"
       model.requestFrame()
       return true
@@ -438,6 +874,7 @@ proc floatPanel(model: var Nide, target: string): bool =
       panel.open = true
       model.floatingOpen = true
       model.floatingTabKey = "panel:" & panel.id
+      inc model.floatingActivationGeneration
       model.status = panel.title & " undocked"
       model.requestFrame()
       return true
@@ -448,6 +885,7 @@ proc floatPane(model: var Nide, paneID: PaneID): bool =
   model.panes.setFloating(paneID, true)
   model.floatingOpen = true
   model.floatingTabKey = "pane:" & paneID
+  inc model.floatingActivationGeneration
   model.status = "Pane undocked"
   model.requestFrame()
   true
@@ -472,6 +910,7 @@ proc switchBuffer(model: var Nide, bufferID: BufferID): bool =
   model.panes.focus(targetPane)
   model.panes.setActiveBuffer(bufferID)
   model.lastFocusedEditorPane = targetPane
+  model.pendingEditorFocus = bufferID
   model.status = "Switched to " & model.buffers.buffers[bufferID].name
   model.requestFrame()
   true
@@ -605,6 +1044,21 @@ proc activeBufferMode(model: Nide): string =
   else:
     ""
 
+proc publishActiveEditorData(model: Nide, bridge: NideOwlBridge) =
+  let editor = model.activeEditorSnapshot()
+  bridge.putData("active-buffer-id", text(editor.bufferID))
+  bridge.putData("active-buffer-path", text(editor.bufferPath))
+  bridge.putData("active-editor-text-length", number(editor.textLength.float64))
+  bridge.putData("active-editor-cursor", number(editor.cursor.float64))
+  bridge.putData("active-editor-line", number(editor.line.float64))
+  bridge.putData("active-editor-column", number(editor.column.float64))
+  bridge.putData("active-editor-selection-start", number(editor.selectionStart.float64))
+  bridge.putData("active-editor-selection-stop", number(editor.selectionStop.float64))
+  bridge.putData("active-editor-has-selection", boolean(editor.hasSelection))
+  bridge.putData("active-editor-selected-text", text(editor.selectedText))
+  bridge.putData("active-editor-input-driver", text(editor.inputDriver))
+  bridge.putData("active-editor-cursor-style", text(editor.cursorStyle))
+
 proc publishBridgeData(model: var Nide) =
   model.bridge.putData("project-manager", model.projectManager.snapshot())
   model.bridge.putData("projects", model.projectManager.projectsValue())
@@ -616,11 +1070,19 @@ proc publishBridgeData(model: var Nide) =
       model.projectManager.activeProjectPath()))
   model.bridge.putData("home-directory", text(getHomeDir()))
   model.bridge.putData("panels", model.panelsValue())
+  model.bridge.putData("floating-activation-generation",
+      number(model.floatingActivationGeneration.float64))
   model.bridge.putData("buffers", model.buffersValue())
   model.bridge.putData("buffer-preview-text", text(model.bufferPreviewText()))
   model.bridge.putData("active-buffer-mode", text(model.activeBufferMode()))
   model.bridge.putData("auto-track-opened-projects",
       boolean(NideAutoTrackOpenedProjects))
+  model.bridge.putData("open-build-launch-tab",
+      boolean(model.openBuildLaunchTab))
+  model.bridge.putData("open-run-launch-tab", boolean(model.openRunLaunchTab))
+  model.bridge.putData("open-check-launch-tab",
+      boolean(model.openCheckLaunchTab))
+  model.publishActiveEditorData(model.bridge)
 
 proc registerRequest(model: var Nide, name: string,
     handler: NideRequestHandler) =
@@ -632,6 +1094,56 @@ proc requestText(request: NideBridgeRequest, index: int): string =
     request.arguments[index].text
   else:
     ""
+
+proc requestNumber(request: NideBridgeRequest, index: int): int =
+  if index < 0 or index >= request.arguments.len:
+    return 0
+  if request.arguments[index].kind == Number:
+    request.arguments[index].number.int
+  else:
+    0
+
+proc requestBool(request: NideBridgeRequest, index: int): bool =
+  if index < 0 or index >= request.arguments.len:
+    return false
+  if request.arguments[index].kind == Boolean:
+    request.arguments[index].boolean
+  else:
+    false
+
+proc requestCursorStyle(request: NideBridgeRequest, index: int): EditorCursorStyle =
+  case request.requestText(index).normalize
+  of "block", "box":
+    EditorBlockCursor
+  else:
+    EditorLineCursor
+
+proc editorWordChar(ch: char): bool =
+  ch in {'A' .. 'Z', 'a' .. 'z', '0' .. '9', '_'}
+
+proc editorWordForwardCursor(text: string, cursor: int): int =
+  result = cursor.clamp(0, text.len)
+  while result < text.len and text[result].editorWordChar:
+    inc result
+  while result < text.len and not text[result].editorWordChar:
+    inc result
+
+proc editorWordBackwardCursor(text: string, cursor: int): int =
+  result = cursor.clamp(0, text.len)
+  while result > 0 and not text[result - 1].editorWordChar:
+    dec result
+  while result > 0 and text[result - 1].editorWordChar:
+    dec result
+
+proc deleteEditorRange(editor: EditorState, first, last: int) =
+  let
+    startIndex = first.clamp(0, editor.text.len)
+    stopIndex = last.clamp(startIndex, editor.text.len)
+  if stopIndex <= startIndex:
+    return
+  editor.selectionAnchor = startIndex
+  editor.cursor = stopIndex
+  discard editor.deleteSelection()
 
 proc openProjectRequest(model: var Nide, request: NideBridgeRequest) =
   try:
@@ -747,6 +1259,8 @@ proc runProjectProfileRequest(model: var Nide, request: NideBridgeRequest) =
       model.status = "Project not found: " & projectName
     elif command.len == 0:
       model.status = kindName & " is not defined for " & profileName
+    elif kind in {Build, Run, Check}:
+      model.startProcessJob(kind, projectName, profileName, directoryPath, command)
     elif runShellCommandAsync(directoryPath, command):
       model.status = kindName & " started: " & command
     else:
@@ -786,6 +1300,102 @@ proc fileExplorerEventRequest(model: var Nide, request: NideBridgeRequest) =
     model.status = "File explorer " & action & ": " & path
   else:
     model.status = "File explorer " & action
+
+proc setProcessLaunchTabRequest(model: var Nide,
+    request: NideBridgeRequest) =
+  let kindName = request.requestText(0).normalize
+  let open = request.requestBool(1)
+  case kindName
+  of "build":
+    model.setProcessLaunchTabSetting(Build, open)
+  of "run":
+    model.setProcessLaunchTabSetting(Run, open)
+  of "check":
+    model.setProcessLaunchTabSetting(Check, open)
+  else:
+    model.status = "Unknown process launch tab kind: " & request.requestText(0)
+    return
+  model.publishBridgeData()
+
+proc activeEditorCommandRequest(model: var Nide, request: NideBridgeRequest) =
+  let id = model.activeBufferID()
+  if not model.buffers.hasBuffer(id):
+    return
+
+  let command = request.requestText(0).normalize
+  let editor = model.buffers.buffers[id].editor
+  case command
+  of "settext", "replace-text", "replacetext":
+    editor.replaceText(request.requestText(1))
+  of "clear":
+    editor.replaceText("")
+  of "insert", "insert-text", "inserttext":
+    editor.insertText(request.requestText(1), request.requestBool(2))
+  of "setcursor", "set-cursor":
+    editor.setCursor(request.requestNumber(1), request.requestBool(2))
+  of "setlinecolumn", "set-line-column":
+    editor.setCursor(
+      editor.cursorForLineColumn(request.requestNumber(1), request.requestNumber(2))
+    )
+  of "wordforward", "word-forward":
+    editor.setCursor(editorWordForwardCursor(editor.text, editor.cursor))
+  of "wordbackward", "word-backward":
+    editor.setCursor(editorWordBackwardCursor(editor.text, editor.cursor))
+  of "deletewordforward", "delete-word-forward":
+    editor.deleteEditorRange(
+      editor.cursor,
+      editorWordForwardCursor(editor.text, editor.cursor),
+    )
+  of "deletewordbackward", "delete-word-backward":
+    editor.deleteEditorRange(
+      editorWordBackwardCursor(editor.text, editor.cursor),
+      editor.cursor,
+    )
+  of "setselection", "set-selection":
+    let
+      startIndex = request.requestNumber(1).clamp(0, editor.text.len)
+      stopIndex = request.requestNumber(2).clamp(0, editor.text.len)
+    editor.selectionAnchor = startIndex
+    editor.cursor = stopIndex
+  of "clearselection", "clear-selection":
+    editor.clearSelection()
+  of "selectall", "select-all":
+    editor.selectAll()
+  of "deleteselection", "delete-selection":
+    discard editor.deleteSelection()
+  of "deletebackward", "delete-backward":
+    editor.deleteBackward()
+  of "deleteforward", "delete-forward":
+    editor.deleteForward()
+  of "killlinestart", "kill-line-start":
+    editor.killToStart()
+  of "killlineend", "kill-line-end":
+    editor.killToEnd()
+  of "copyselection", "copy-selection":
+    discard editor.copySelection()
+  of "cutselection", "cut-selection":
+    discard editor.cutSelection()
+  of "pasteclipboard", "paste-clipboard":
+    editor.pasteClipboard(request.requestBool(1))
+  of "undo":
+    editor.undo()
+  of "redo":
+    editor.redo()
+  of "setinputdriver", "set-input-driver":
+    let driver = request.requestText(1).normalize
+    if editor.inputDriver == driver:
+      return
+    editor.inputDriver = driver
+  of "setcursorstyle", "set-cursor-style":
+    let style = request.requestCursorStyle(1)
+    if editor.cursorStyle == style:
+      return
+    editor.cursorStyle = style
+  else:
+    model.status = "Unknown editor command: " & request.requestText(0)
+    return
+  editor.ensureCursorVisible = true
+  model.requestFrame()
 
 proc valueText(value: Value, key: string): string =
   if value.kind == Dictionary and key in value.entries and
@@ -971,9 +1581,11 @@ proc configureBridge(model: var Nide) =
       request: NideBridgeRequest) =
     model.previewBuffer(request.requestText(0))
   )
+  model.registerRequest("active-editor.command", activeEditorCommandRequest)
   model.registerRequest("file-explorer.open", fileExplorerOpenRequest)
   for action in ["select", "toggle", "refresh", "search", "sort", "filter", "hidden"]:
     model.registerRequest("file-explorer." & action, fileExplorerEventRequest)
+  model.registerRequest("process.launch-tab.set", setProcessLaunchTabRequest)
   model.registerRequest("project.open", openProjectRequest)
   model.registerRequest("project.add", addProjectRequest)
   model.registerRequest("project.profile.save", saveProjectProfileRequest)
@@ -1077,30 +1689,34 @@ proc layoutPane(ui: var UI, model: var Nide, paneID: PaneID,
       if active: color(42, 94, 118) else: color(35, 40, 44)
 
     ui.panel(panelID, cfg(width = fill(min = MinPaneWidth),
-        height = fill(min = MinPaneHeight), padding = 3, gap = 2,
+        height = fill(min = MinPaneHeight), padding = 2, gap = 1,
         alignSelf = AlignStretch).withBackground(background)):
-      ui.row(ui.id("paneHeader", paneID), cfg(width = fill(), height = fit(),
-          gap = 8, alignItems = AlignCenter)):
+      ui.row(ui.id("paneHeader", paneID), cfg(width = fill(), height = fixed(24),
+          gap = 4, alignItems = AlignCenter)):
         ui.label(ui.id("paneTitle", paneID),
             bufferTitle(model.buffers.buffers[pane.bufferID]), width = fill())
         if floatingContent:
-          if ui.button(ui.id("paneDock", paneID), "⇲", width = fixed(30),
-              height = fit()):
+          if ui.button(ui.id("paneDock", paneID), "", width = fixed(24),
+              height = fixed(24), buttonVariant = ButtonIcon, fontName = "icon"):
             discard model.dockPane(paneID)
           ui.tooltip(ui.id("paneDock", paneID), "Dock pane")
         else:
-          if ui.button(ui.id("paneFloat", paneID), "⇱", width = fixed(30),
-              height = fit()):
+          if ui.button(ui.id("paneFloat", paneID), "", width = fixed(24),
+              height = fixed(24), buttonVariant = ButtonIcon, fontName = "icon"):
             discard model.floatPane(paneID)
           ui.tooltip(ui.id("paneFloat", paneID), "Undock pane")
-        if ui.button(ui.id("paneClose", paneID), "×", width = fixed(30),
-            height = fit()):
+        if ui.button(ui.id("paneClose", paneID), "", width = fixed(24),
+            height = fixed(24), buttonVariant = ButtonIcon, fontName = "icon"):
           discard model.closePane(paneID)
         ui.tooltip(ui.id("paneClose", paneID), "Close pane")
       ui.textEditor(editorID, model.buffers.buffers[pane.bufferID].editor,
           width = fill(min = MinPaneWidth), height = fill(min = MinPaneHeight),
           fontName = "editor", lineNumbers = true, scrollbars = true,
           syntax = model.buffers.buffers[pane.bufferID].editor.syntax.name)
+      if model.pendingEditorFocus == pane.bufferID and
+          paneID == model.panes.activePane:
+        ui.focus(editorID)
+        model.pendingEditorFocus = InvalidBufferID
 
     if ui.clicked(panelID) or ui.focused(editorID):
       model.panes.focus(paneID)
@@ -1147,8 +1763,8 @@ proc renderPanelDock(ui: var UI, model: var Nide, dock: PanelDock) =
             height = fit(), padding = 4, gap = 6, alignItems = AlignCenter,
             ).withBackground(color(30, 34, 38))):
           ui.label(ui.id("panelDockTitle", panel.id), panel.title, width = fill())
-          if ui.button(ui.id("panelDockFloat", panel.id), "⇱", width = fixed(30),
-              height = fit()):
+          if ui.button(ui.id("panelDockFloat", panel.id), "", width = fixed(30),
+              height = fit(), buttonVariant = ButtonIcon, fontName = "icon"):
             discard model.floatPanel(panel.id)
           ui.tooltip(ui.id("panelDockFloat", panel.id), "Undock panel")
         model.uiRuntime.renderWidget(ui, NideSourceDir /
@@ -1158,18 +1774,102 @@ proc renderPanelDock(ui: var UI, model: var Nide, dock: PanelDock) =
         model.processBridgeRequests()
         ui.flushModelRedraw(model)
 
+proc renderProcessJobTab(ui: var UI, model: var Nide, index: int) =
+  if index < 0 or index >= model.processJobs.len:
+    return
+  let job = model.processJobs[index]
+  ui.column(ui.id("processJob", job.id), cfg(width = fill(), height = fill(),
+      padding = 0, gap = 8, alignItems = AlignStretch)):
+    ui.row(ui.id("processJobHeader", job.id), cfg(width = fill(), height = fit(),
+        padding = 8, gap = 10, alignItems = AlignCenter).withBackground(
+        color(30, 34, 38))):
+      ui.processSpinner(ui.id("processJobIcon", job.id),
+          job.status == ProcessRunning, job.status == ProcessSucceeded,
+          job.spinnerFrame)
+      ui.label(ui.id("processJobTitle", job.id), job.processJobTitle(),
+          width = fit(), height = fit())
+      ui.label(ui.id("processJobStatus", job.id), job.processJobStatusText(),
+          width = fit(), height = fit())
+      ui.label(ui.id("processJobCommand", job.id), job.command, width = fill(),
+          height = fit(), textScroll = true)
+
+    ui.textEditor(ui.id("processJobOutput", job.id),
+        model.processJobs[index].output, width = fill(), height = fill(),
+        fontName = "editor", lineNumbers = false, scrollbars = true,
+        readOnly = true)
+
+    ui.row(ui.id("processJobTools", job.id), cfg(width = fill(), height = fit(),
+        padding = 8, gap = 8, alignItems = AlignCenter).withBackground(
+        color(24, 28, 32))):
+      if model.processJobs[index].status == ProcessRunning:
+        if ui.button(ui.id("processJobKill", job.id), "Kill", width = fixed(74),
+            height = fit(), buttonPadding = 8):
+          model.processJobs[index].killProcessJob()
+          model.status = job.kind.commandKindName() & " killed"
+          model.requestFrame()
+      else:
+        ui.label(ui.id("processJobKillPlaceholder", job.id), "", width = fixed(74),
+            height = fit())
+      if ui.button(ui.id("processJobRestart", job.id), "Restart", width = fixed(92),
+          height = fit(), buttonPadding = 8):
+        model.restartProcessJob(index)
+      ui.label(ui.id("processJobDirectory", job.id), job.directoryPath, width = fill(),
+          height = fit(), textScroll = true)
+
+proc renderProcessCards(ui: var UI, model: var Nide) =
+  var visible: seq[int]
+  for index, job in model.processJobs:
+    if not job.cardDismissed and job.kind in {Build, Run, Check}:
+      visible.add index
+  if visible.len == 0:
+    return
+
+  ui.column(ui.id("processCards"), cfg(width = fixed(360), height = fit(
+      max = 260), gap = 8, padding = 0, alignSelf = AlignEnd,
+      alignItems = AlignStretch)):
+    for index in visible:
+      let job = model.processJobs[index]
+      let cardID = ui.id("processCard", job.id)
+      let dismissID = ui.id("processCardDismiss", job.id)
+      ui.card(cardID, cfg(width = fill(), height = fixed(64), padding = 8,
+          gap = 0,
+          alignSelf = AlignEnd, alignItems = AlignStretch).withBackground(
+          color(34, 39, 44, 248)).withRadii(12, 0, 0, 12).withShadow()):
+        ui.row(ui.id("processCardRow", job.id), cfg(width = fill(),
+            height = fixed(48), padding = 0, gap = 8,
+            alignItems = AlignCenter)):
+          ui.processSpinner(ui.id("processCardIcon", job.id),
+              job.status == ProcessRunning, job.status == ProcessSucceeded,
+              job.spinnerFrame)
+          ui.column(ui.id("processCardText", job.id), cfg(width = fixed(282),
+              height = fixed(42), gap = 2, padding = 0,
+              alignItems = AlignStretch)):
+            ui.label(ui.id("processCardTitle", job.id),
+                job.kind.commandKindName() & " · " & job.processJobStatusText(),
+                width = fixed(282), height = fixed(19), textScroll = true)
+            ui.label(ui.id("processCardCommand", job.id), job.command,
+                width = fixed(282), height = fixed(19), textScroll = true)
+          if ui.button(dismissID, "", width = fixed(28),
+              height = fixed(28), buttonVariant = ButtonIcon, fontName = "icon"):
+            model.processJobs[index].cardDismissed = true
+            model.requestFrame()
+      if ui.clickedIn(cardID) and not ui.clickedIn(dismissID):
+        model.openProcessJob(job.id)
+
 proc renderFloatingDock(ui: var UI, model: var Nide) =
   var
     labels: seq[string]
     keys: seq[string]
     panelIDs: seq[string]
     paneIDs: seq[PaneID]
+    processJobIDs: seq[string]
   for panel in model.panels:
     if panel.dock == PanelFloating and panel.open:
       labels.add panel.title
       keys.add "panel:" & panel.id
       panelIDs.add panel.id
       paneIDs.add InvalidPaneID
+      processJobIDs.add ""
   for paneID in model.panes.floatingPaneIDs():
     if paneID in model.panes.panes:
       let bufferID = model.panes.panes[paneID].bufferID
@@ -1178,6 +1878,13 @@ proc renderFloatingDock(ui: var UI, model: var Nide) =
         keys.add "pane:" & paneID
         panelIDs.add ""
         paneIDs.add paneID
+        processJobIDs.add ""
+  for job in model.processJobs:
+    labels.add job.processJobTitle()
+    keys.add processJobKey(job.id)
+    panelIDs.add ""
+    paneIDs.add InvalidPaneID
+    processJobIDs.add job.id
 
   if labels.len == 0:
     model.floatingOpen = false
@@ -1189,7 +1896,10 @@ proc renderFloatingDock(ui: var UI, model: var Nide) =
         model.floatingTab = index
         break
   model.floatingTab = model.floatingTab.clamp(0, labels.high)
+  let previousFloatingTabKey = model.floatingTabKey
   model.floatingTabKey = keys[model.floatingTab]
+  if model.floatingTabKey != previousFloatingTabKey:
+    inc model.floatingActivationGeneration
 
   let floatingDockID = ui.id("floatingDock")
   ui.resizableModalDialog(floatingDockID, model.floatingOpen,
@@ -1201,21 +1911,27 @@ proc renderFloatingDock(ui: var UI, model: var Nide) =
       ui.tabs(ui.id("floatingDockTabs"), labels, model.floatingTab,
           width = fill(), height = fit())
       model.floatingTab = model.floatingTab.clamp(0, labels.high)
+      let previousFloatingTabKey = model.floatingTabKey
       model.floatingTabKey = keys[model.floatingTab]
+      if model.floatingTabKey != previousFloatingTabKey:
+        inc model.floatingActivationGeneration
+        model.publishBridgeData()
       let selectedPanel = panelIDs[model.floatingTab]
       let selectedPane = paneIDs[model.floatingTab]
       if selectedPanel.len > 0:
-        if ui.button(ui.id("floatingPanelDock", selectedPanel), "⇲",
-            width = fixed(32), height = fit()):
+        if ui.button(ui.id("floatingPanelDock", selectedPanel), "",
+            width = fixed(32), height = fit(), buttonVariant = ButtonIcon,
+            fontName = "icon"):
           discard model.dockPanel(selectedPanel)
         ui.tooltip(ui.id("floatingPanelDock", selectedPanel), "Dock panel")
       elif selectedPane != InvalidPaneID:
-        if ui.button(ui.id("floatingPaneDock", selectedPane), "⇲",
-            width = fixed(32), height = fit()):
+        if ui.button(ui.id("floatingPaneDock", selectedPane), "",
+            width = fixed(32), height = fit(), buttonVariant = ButtonIcon,
+            fontName = "icon"):
             discard model.dockPane(selectedPane)
         ui.tooltip(ui.id("floatingPaneDock", selectedPane), "Dock pane")
-      if ui.button(ui.id("floatingDockHide"), "×", width = fixed(32),
-          height = fit()):
+      if ui.button(ui.id("floatingDockHide"), "", width = fixed(32),
+          height = fit(), buttonVariant = ButtonIcon, fontName = "icon"):
         model.closeFloating()
       ui.tooltip(ui.id("floatingDockHide"), "Hide")
     if panelIDs[model.floatingTab].len > 0:
@@ -1230,10 +1946,17 @@ proc renderFloatingDock(ui: var UI, model: var Nide) =
           break
     elif paneIDs[model.floatingTab] != InvalidPaneID:
       ui.layoutPane(model, paneIDs[model.floatingTab], floatingContent = true)
+    elif processJobIDs[model.floatingTab].len > 0:
+      ui.renderProcessJobTab(model,
+          model.processJobIndex(processJobIDs[model.floatingTab]))
 
 widget nideApplication(model: var Nide):
   model.owlErrorApp.pollOwlErrorDialog()
   model.processPendingFileAction()
+  if ui.inEventPhase():
+    model.pollProcessJobs()
+    if model.hasRunningProcessJob():
+      ui.requestFullRedrawAfter(16)
   ui.flushModelRedraw(model)
   model.uiRuntime.evaluator.env.bindText(VarStatus, model.status)
   model.publishBridgeData()
@@ -1241,59 +1964,84 @@ widget nideApplication(model: var Nide):
     model.closeFloating()
     ui.flushModelRedraw(model)
 
-  ui.column(ui.id("root"), cfg(width = fill(), height = fill(), gap = 0)):
-    model.uiRuntime.renderWidget(ui, NideSourceDir / "keybindings.owl",
-        "nide-keybindings")
-    discard model.consumeRuntimeError("Keybindings")
-    model.processBridgeRequests()
-    ui.flushModelRedraw(model)
+  ui.overlay(ui.id("rootOverlay"), cfg(width = fill(), height = fill(), gap = 0)):
+    ui.column(ui.id("root"), cfg(width = fill(), height = fill(), gap = 0)):
+      if ui.keyboardInputPending():
+        if fileExists(nideKeybindingsPath()):
+          model.uiRuntime.renderWidget(ui, nideKeybindingsPath(),
+              "nide-user-keybindings")
+          discard model.consumeRuntimeError("User keybindings")
+          model.processBridgeRequests()
+          model.publishBridgeData()
+          ui.flushModelRedraw(model)
 
-    for event in ui.toolbarDock(model.toolbars, model.uiRuntime, TopDock,
-        NideSourceDir):
-      model.handleToolbarEvent(ui, event)
-    discard model.consumeRuntimeError("Top toolbar")
+        model.uiRuntime.renderWidget(ui, NideSourceDir / "keybindings.owl",
+            "nide-keybindings")
+        discard model.consumeRuntimeError("Keybindings")
+        model.processBridgeRequests()
+        ui.flushModelRedraw(model)
 
-    ui.renderPanelDock(model, PanelTop)
-
-    ui.row(ui.id("workspaceDockRow"), cfg(width = fill(), height = fill(),
-        gap = 0, alignSelf = AlignStretch)):
-      for event in ui.toolbarDock(model.toolbars, model.uiRuntime, LeftDock,
+      for event in ui.toolbarDock(model.toolbars, model.uiRuntime, TopDock,
           NideSourceDir):
         model.handleToolbarEvent(ui, event)
-      discard model.consumeRuntimeError("Left toolbar")
+      discard model.consumeRuntimeError("Top toolbar")
+      model.processBridgeRequests()
+      ui.flushModelRedraw(model)
 
-      ui.renderPanelDock(model, PanelLeft)
+      ui.renderPanelDock(model, PanelTop)
 
-      ui.panel(ui.id("workspace"), cfg(width = fill(), height = fill(),
-          padding = 6, gap = 4)):
-        ui.column(ui.id("workspaceScroll"), cfg(width = fill(), height = fill(),
-            scrollX = true, scrollY = true, scrollWheel = false,
-            alignItems = AlignStretch)):
-          ui.row(ui.id("workspaceRoot"), cfg(width = fill(
-              min = MinWorkspaceWidth), height = fill(min = MinWorkspaceHeight),
-                  gap = 0,
-              alignSelf = AlignStretch)):
-            ui.layoutPane(model, model.panes.rootPane)
-            if not model.panes.hasDockedLeaf(model.panes.rootPane):
-              ui.center(ui.id("emptyWorkspace"), fill(), fill()):
-                ui.label(ui.id("emptyWorkspaceLabel"), "All panes are floating",
-                    width = fit(), height = fit())
+      ui.row(ui.id("workspaceDockRow"), cfg(width = fill(), height = fill(),
+          gap = 0, alignSelf = AlignStretch)):
+        for event in ui.toolbarDock(model.toolbars, model.uiRuntime, LeftDock,
+            NideSourceDir):
+          model.handleToolbarEvent(ui, event)
+        discard model.consumeRuntimeError("Left toolbar")
+        model.processBridgeRequests()
+        ui.flushModelRedraw(model)
 
-      ui.renderPanelDock(model, PanelRight)
+        ui.renderPanelDock(model, PanelLeft)
 
-      for event in ui.toolbarDock(model.toolbars, model.uiRuntime, RightDock,
+        ui.panel(ui.id("workspace"), cfg(width = fill(), height = fill(),
+            padding = 6, gap = 4)):
+          ui.column(ui.id("workspaceScroll"), cfg(width = fill(), height = fill(),
+              scrollX = true, scrollY = true, scrollWheel = false,
+              alignItems = AlignStretch)):
+            ui.row(ui.id("workspaceRoot"), cfg(width = fill(
+                min = MinWorkspaceWidth), height = fill(min = MinWorkspaceHeight),
+                    gap = 0,
+                alignSelf = AlignStretch)):
+              ui.layoutPane(model, model.panes.rootPane)
+              if not model.panes.hasDockedLeaf(model.panes.rootPane):
+                ui.center(ui.id("emptyWorkspace"), fill(), fill()):
+                  ui.label(ui.id("emptyWorkspaceLabel"), "All panes are floating",
+                      width = fit(), height = fit())
+
+        ui.renderPanelDock(model, PanelRight)
+
+        for event in ui.toolbarDock(model.toolbars, model.uiRuntime, RightDock,
+            NideSourceDir):
+          model.handleToolbarEvent(ui, event)
+        discard model.consumeRuntimeError("Right toolbar")
+        model.processBridgeRequests()
+        ui.flushModelRedraw(model)
+
+      ui.renderPanelDock(model, PanelBottom)
+
+      for event in ui.toolbarDock(model.toolbars, model.uiRuntime, BottomDock,
           NideSourceDir):
         model.handleToolbarEvent(ui, event)
-      discard model.consumeRuntimeError("Right toolbar")
+      discard model.consumeRuntimeError("Bottom toolbar")
+      model.processBridgeRequests()
+      ui.flushModelRedraw(model)
 
-    ui.renderPanelDock(model, PanelBottom)
+      ui.statusbar(model.uiRuntime)
+      model.processBridgeRequests()
+      ui.flushModelRedraw(model)
 
-    for event in ui.toolbarDock(model.toolbars, model.uiRuntime, BottomDock,
-        NideSourceDir):
-      model.handleToolbarEvent(ui, event)
-    discard model.consumeRuntimeError("Bottom toolbar")
-
-    ui.statusbar(model.uiRuntime)
+    ui.overlay(ui.id("processCardsOverlay"), cfg(width = fill(), height = fill(),
+        padding = 14, paddingBottom = 50, gap = 0, alignItems = AlignEnd,
+        justifyContent = JustifyEnd)):
+      ui.renderProcessCards(model)
 
   ui.renderFloatingDock(model)
   ui.flushModelRedraw(model)
@@ -1313,6 +2061,8 @@ proc start =
     nide.loadProjectManager()
     nide.runNideSource(NideCommandsSource, currentSourcePath().parentDir /
         "commands.owl")
+    discard nide.uiRuntime.evaluator.exec(parse(NideCommandsSource,
+        currentSourcePath().parentDir / "commands.owl"))
     nide.uiRuntime.evaluator.env.bindText(VarStatus, nide.status)
     discard nide.uiRuntime.evaluator.exec(parse(NideLoadSource,
         currentSourcePath().parentDir / "load.owl"))

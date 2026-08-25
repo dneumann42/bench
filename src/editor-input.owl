@@ -1,0 +1,19 @@
+import "editor-input/core.owl"
+import "editor-input/vscode.owl"
+import "editor-input/emacs.owl"
+import "editor-input/vi.owl"
+
+state "nide-editor-input-config":
+  editorInputDriver = "emacs"
+
+fun configured-editor-input-driver:
+  cond:
+    when (= editorInputDriver "vscode"):
+      vscode-editor-driver
+    when (= editorInputDriver "vi"):
+      vi-editor-driver
+    when true:
+      emacs-editor-driver
+
+fun run-configured-editor-input-driver:
+  run-editor-input-driver (configured-editor-input-driver)

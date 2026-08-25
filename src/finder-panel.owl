@@ -1,0 +1,112 @@
+use nide:
+  include rgb regex span starts-with syntax
+
+fun finder-focus-query queryID:
+  when (not (keyboardInput?)):
+    focus queryID
+
+fun finder-preview-syntax name:
+  define:
+    rules = []:
+      span "\"" "\"" (rgb 210 170 110)
+      span "'" "'" (rgb 210 170 110)
+      starts-with "#" (rgb 112 145 118)
+      starts-with "//" (rgb 112 145 118)
+      regex "\\b(proc|func|type|let|var|const|import|from|if|else|elif|case|of|for|while|return|when|template|macro|object|enum)\\b" (rgb 126 190 235)
+  syntax name rules
+
+fun finder-row-key row keyName:
+  dict-get row keyName
+
+fun finder-first-key rows keyName:
+  if (empty? rows):
+    ""
+  else:
+    finder-row-key (first rows) keyName
+
+fun finder-current-key rows selected keyName:
+  pick (= selected "") (finder-first-key rows keyName) selected
+
+fun finder-next-key rows selected keyName:
+  cond:
+    when (empty? rows):
+      selected
+    when (= selected ""):
+      finder-first-key rows keyName
+    when (= (finder-row-key (first rows) keyName) selected):
+      if (empty? (rest rows)):
+        selected
+      else:
+        finder-row-key (first (rest rows)) keyName
+    when true:
+      finder-next-key (rest rows) selected keyName
+
+fun finder-previous-key-in rows selected previous keyName:
+  cond:
+    when (empty? rows):
+      selected
+    when (= selected ""):
+      finder-first-key rows keyName
+    when (= (finder-row-key (first rows) keyName) selected):
+      pick (= previous "") selected previous
+    when true:
+      finder-previous-key-in (rest rows) selected (finder-row-key (first rows) keyName) keyName
+
+fun finder-previous-key rows selected keyName:
+  finder-previous-key-in rows selected "" keyName
+
+fun finder-scroll-row panelKey resultsID rowKey:
+  scrollIntoView resultsID (id panelKey "row" rowKey) 6
+
+fun finder-list-keybindings owner previousCommand nextCommand:
+  run-keybindings-owned owner (dialog-list-keybindings previousCommand nextCommand)
+
+block-command finder-panel panelKey queryID:
+  define:
+    keyText = (eval panelKey)
+    queryWidget = (eval queryID)
+  panel (id keyText "panel"):
+    width = fill
+    height = fill
+    padding = 8
+    gap = 8
+    alignItems = AlignStretch
+    background = color 23 27 31
+    lineInput queryWidget "":
+      width = fill
+      height = fixed 30
+      fontName = "editor"
+    row (id keyText "body"):
+      width = fill
+      height = fill
+      gap = 8
+      alignItems = AlignStretch
+      eval block
+
+block-command finder-results resultsID rows emptyMessage:
+  define:
+    resultsWidget = (eval resultsID)
+    rowItems = (eval rows)
+    emptyText = (eval emptyMessage)
+  column resultsWidget:
+    width = fixed 340
+    height = fill
+    gap = 1
+    scrollY = true
+    alignItems = AlignStretch
+    if (empty? rowItems):
+      label (id resultsWidget "empty") emptyText:
+        width = fill
+        height = fit
+    else:
+      eval block
+
+widget finder-preview previewID syntaxName:
+  editor (eval previewID):
+    width = fill
+    height = fill
+    fontName = "editor"
+    lineNumbers = true
+    scrollbars = true
+    readOnly = true
+    syntax = (eval syntaxName)

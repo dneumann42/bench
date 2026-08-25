@@ -1,0 +1,41 @@
+import "core.owl"
+
+fun emacs-editor-driver:
+  EditorInputDriver:
+    name = "emacs"
+    mode = "insert"
+    textCommand = (value-of editor-insert-frame-text)
+    bindings = keymap:
+      key "left" editor-backward-char
+      key "right" editor-forward-char
+      key "up" editor-previous-line
+      key "down" editor-next-line
+      key "home" editor-line-start
+      key "end" editor-line-end
+      key "backspace" editor-delete-backward
+      key "delete" editor-delete-forward
+      key "enter" editor-newline
+      ctrl "b" editor-backward-char
+      ctrl "f" editor-forward-char
+      ctrl "p" editor-previous-line
+      ctrl "n" editor-next-line
+      ctrl "a" editor-line-start
+      ctrl "e" editor-line-end
+      ctrl "d" editor-delete-forward
+      ctrl "h" editor-delete-backward
+      ctrl "g" cancel-key-sequence
+      ctrl "k" editor-kill-line-end
+      ctrl "u" editor-kill-line-start
+      ctrl "w" editor-cut
+      ctrl "c" editor-copy
+      ctrl "v" editor-paste
+      ctrl "z" editor-undo
+      ctrl "y" editor-redo
+      alt "b" editor-backward-word
+      alt "f" editor-forward-word
+      alt "d" editor-delete-word-forward
+      alt "w" editor-copy
+      key-combo "space" true false false false editor-mark
+      key-combo "backspace" false true false false editor-delete-word-backward
+      key-combo "comma" false true true false editor-buffer-start
+      key-combo "period" false true true false editor-buffer-end

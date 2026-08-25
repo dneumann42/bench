@@ -1,0 +1,235 @@
+use nide:
+  include active-editor-command get-active-editor-column get-active-editor-cursor get-active-editor-line get-active-editor-text-length get-active-editor-input-driver get-active-editor-cursor-style get-active-editor-has-selection get-active-editor-selection-start get-active-editor-selection-stop
+
+fun noop:
+  nothing
+
+record KeyBinding:
+  key = ""
+  ctrl = false
+  alt = false
+  shift = false
+  gui = false
+  command = (value-of noop)
+  children = ([])
+
+record EditorInputDriver:
+  name = ""
+  mode = ""
+  bindings = ([])
+  textCommand = (value-of noop)
+
+fun binding-children body:
+  if (= (length (statements body)) 0):
+    ([])
+  else:
+    list-from (statements body)
+
+block-command key keyName command:
+  KeyBinding:
+    key = (eval keyName)
+    command = (eval command)
+    children = (binding-children block)
+
+block-command ctrl keyName command:
+  KeyBinding:
+    key = (eval keyName)
+    ctrl = true
+    command = (eval command)
+    children = (binding-children block)
+
+block-command alt keyName command:
+  KeyBinding:
+    key = (eval keyName)
+    alt = true
+    command = (eval command)
+    children = (binding-children block)
+
+block-command shift keyName command:
+  KeyBinding:
+    key = (eval keyName)
+    shift = true
+    command = (eval command)
+    children = (binding-children block)
+
+block-command key-combo keyName ctrlPressed altPressed shiftPressed guiPressed command:
+  KeyBinding:
+    key = (eval keyName)
+    ctrl = (eval ctrlPressed)
+    alt = (eval altPressed)
+    shift = (eval shiftPressed)
+    gui = (eval guiPressed)
+    command = (eval command)
+    children = (binding-children block)
+
+block-command keymap:
+  list-from (statements block)
+
+state "nide-keymap-dispatch":
+  pendingKeymap = ([])
+  pendingKeymapOwner = ""
+
+fun cancel-key-sequence:
+  set pendingKeymap ([])
+  set pendingKeymapOwner ""
+
+fun active-keymap owner bindings:
+  if (empty? pendingKeymap):
+    bindings
+  else:
+    if (= pendingKeymapOwner owner):
+      pendingKeymap
+    else:
+      ([])
+
+fun set-active-editor-driver name:
+  active-editor-command "set-input-driver" name
+
+fun set-editor-line-cursor:
+  active-editor-command "set-cursor-style" "line"
+
+fun set-editor-block-cursor:
+  active-editor-command "set-cursor-style" "block"
+
+fun active-editor-text-length:
+  get-active-editor-text-length
+
+fun editor-set-cursor cursor:
+  active-editor-command "set-cursor" cursor
+
+fun editor-set-selection start stop:
+  active-editor-command "set-selection" start stop
+
+fun editor-backward-char:
+  define:
+    cursor = get-active-editor-cursor
+  if (> cursor 0):
+    editor-set-cursor (- cursor 1)
+  else:
+    nothing
+
+fun editor-forward-char:
+  define:
+    cursor = get-active-editor-cursor
+  if (< cursor (active-editor-text-length)):
+    editor-set-cursor (+ cursor 1)
+  else:
+    nothing
+
+fun editor-previous-line:
+  active-editor-command "set-line-column" (- (get-active-editor-line) 1) (get-active-editor-column)
+
+fun editor-next-line:
+  active-editor-command "set-line-column" (+ (get-active-editor-line) 1) (get-active-editor-column)
+
+fun editor-line-start:
+  active-editor-command "set-line-column" (get-active-editor-line) 1
+
+fun editor-line-end:
+  active-editor-command "set-line-column" (get-active-editor-line) 100000000
+
+fun editor-buffer-start:
+  editor-set-cursor 0
+
+fun editor-buffer-end:
+  editor-set-cursor (active-editor-text-length)
+
+fun editor-forward-word:
+  active-editor-command "word-forward"
+
+fun editor-backward-word:
+  active-editor-command "word-backward"
+
+fun editor-delete-word-forward:
+  active-editor-command "delete-word-forward"
+
+fun editor-delete-word-backward:
+  active-editor-command "delete-word-backward"
+
+fun editor-insert text:
+  active-editor-command "insert" text
+
+fun editor-delete-backward:
+  active-editor-command "delete-backward"
+
+fun editor-delete-forward:
+  active-editor-command "delete-forward"
+
+fun editor-delete-selection:
+  active-editor-command "delete-selection"
+
+fun editor-kill-line-start:
+  active-editor-command "kill-line-start"
+
+fun editor-kill-line-end:
+  active-editor-command "kill-line-end"
+
+fun editor-select-all:
+  active-editor-command "select-all"
+
+fun editor-mark:
+  define:
+    cursor = get-active-editor-cursor
+  editor-set-selection cursor cursor
+
+fun editor-copy:
+  active-editor-command "copy-selection"
+
+fun editor-cut:
+  active-editor-command "cut-selection"
+
+fun editor-paste:
+  active-editor-command "paste-clipboard"
+
+fun editor-undo:
+  active-editor-command "undo"
+
+fun editor-redo:
+  active-editor-command "redo"
+
+fun editor-newline:
+  editor-insert "\n"
+
+fun editor-insert-frame-text:
+  define:
+    input = textInput
+  if (= input ""):
+    nothing
+  else:
+    editor-insert input
+
+fun key-binding-pressed binding:
+  keyComboPressed binding.key binding.ctrl binding.alt binding.shift binding.gui
+
+fun run-keybindings-in owner bindings:
+  if (empty? bindings):
+    false
+  else:
+    define:
+      binding = (first bindings)
+    if (key-binding-pressed binding):
+      do:
+        if (empty? binding.children):
+          do:
+            cancel-key-sequence
+            call binding.command
+        else:
+          set pendingKeymap binding.children
+          set pendingKeymapOwner owner
+        true
+    else:
+      run-keybindings-in owner (rest bindings)
+
+fun run-keybindings bindings:
+  run-keybindings-owned "default" bindings
+
+fun run-keybindings-owned owner bindings:
+  run-keybindings-in owner (active-keymap owner bindings)
+
+fun run-editor-input-driver driver:
+  when (not (= (get-active-editor-input-driver) "owl")):
+    set-active-editor-driver "owl"
+  if (not (run-keybindings-owned "editor" driver.bindings)):
+    call driver.textCommand
+  else:
+    nothing
