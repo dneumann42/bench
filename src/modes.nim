@@ -11,8 +11,6 @@ type
 
 const
   BuiltinRulesSource* = staticRead"modes/builtin.rules.owl"
-  BuiltinNimModeSource* = staticRead"modes/nim.owl"
-  BuiltinOwlModeSource* = staticRead"modes/owl.owl"
   ModesDirName* = "modes"
   ViewersDirName* = "viewers"
   SourceDirName* = currentSourcePath().parentDir
@@ -155,25 +153,27 @@ proc detectMode*(registry: ModeRegistry, path, content: string): string =
         return rule.mode
   ""
 
-proc builtinModeSource*(mode: string): string =
-  case mode.normalizeMode()
-  of "nim":
-    BuiltinNimModeSource
-  of "owl":
-    BuiltinOwlModeSource
-  else:
-    ""
-
 proc modeScriptPath*(mode: string): string =
   nideModesDir() / (mode.normalizeMode() & ".owl")
 
+proc builtinModeScriptPath*(mode: string): string =
+  SourceDirName / ModesDirName / (mode.normalizeMode() & ".owl")
+
 proc modeSource*(mode: string): tuple[source, path: string] =
-  let userPath = mode.modeScriptPath()
-  if fileExists(userPath):
-    return (readFile(userPath), userPath)
-  let source = mode.builtinModeSource()
-  if source.len > 0:
-    return (source, "<builtin mode:" & mode.normalizeMode() & ">")
+  ## The script for `mode`, found by name rather than from a list: the user's
+  ## copy in the config directory wins, otherwise the one shipped with nide.
+  ##
+  ## A mode with no script has none, and the buffer is left as plain text.
+  ## Dropping `<mode>.owl` into either directory is all it takes to add one.
+  let normalized = mode.normalizeMode()
+  if normalized.len == 0:
+    return ("", "")
+  for path in [normalized.modeScriptPath(), normalized.builtinModeScriptPath()]:
+    try:
+      if fileExists(path):
+        return (readFile(path), path)
+    except CatchableError:
+      discard
   ("", "")
 
 proc viewerScriptPath*(mode: string): string =

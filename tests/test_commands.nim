@@ -1,7 +1,9 @@
-import std/[strutils, unittest]
+import std/[monotimes, os, strutils, unittest]
+from std/times import inNanoseconds
 
 import owl
 import ../src/commands
+import ../src/modes
 
 suite "command registry":
   test "native commands register themselves as the module loads":
@@ -150,6 +152,64 @@ run-command "set-status" "reached"
 """, "<test>"))
     check evaluator.env.get("nide-status").text == "reached"
 
+  test "a command can declare tags and be found by them":
+    discard evaluator.exec(parse("""
+use nide:
+  include defcommand
+
+defcommand tagged-one:
+  "First tagged command."
+  tags "demo" "alpha"
+  nothing
+
+defcommand tagged-two:
+  "Second tagged command."
+  tags "demo"
+  nothing
+
+defcommand untagged-one:
+  "Not tagged at all."
+  nothing
+""", "<test>"))
+    check commandTags("tagged-one") == @["demo", "alpha"]
+    check commandTags("untagged-one").len == 0
+    var demo: seq[string]
+    for command in commandsTagged("demo"):
+      demo.add command.id
+    check demo == @["tagged-one", "tagged-two"]
+    check "untagged-one" notin demo
+
+  test "a tag declaration is metadata, not part of the body":
+    # `tags` must not run as code, and must not become the command's result.
+    discard evaluator.exec(parse("""
+use nide:
+  include defcommand set-status
+
+defcommand tag-then-body:
+  "Runs its body, not its tags."
+  tags "demo"
+  set-status "body ran"
+""", "<test>"))
+    discard evaluator.env.invoke("tag-then-body")
+    check evaluator.env.get("nide-status").text == "body ran"
+
+  test "the mode scripts tag their commands":
+    let path = currentSourcePath().parentDir.parentDir / "src" / "modes" / "nim.owl"
+    discard evaluator.exec(parse(readFile(path), path))
+    check "mode" in commandTags("nim-enable-highlighting")
+    check "nim" in commandTags("nim-enable-highlighting")
+
+  test "a plain fun is not reachable by id":
+    # An Owl `fun` is a private callable, not a Nide command. Anything meant to
+    # be invoked by name declares itself with `defcommand`.
+    discard evaluator.exec(parse("""
+fun not-a-command:
+  nothing
+""", "<test>"))
+    check not hasCommand("not-a-command")
+    expect EvaluatorError:
+      discard evaluator.env.invoke("not-a-command")
+
   test "run-command reports an unknown id instead of failing quietly":
     expect EvaluatorError:
       discard evaluator.exec(parse("""
@@ -158,3 +218,70 @@ use nide:
 
 run-command "not-a-real-command"
 """, "<test>"))
+
+
+suite "project file scanning":
+  setup:
+    var evaluator = Evaluator.init()
+    let bridge = NideOwlBridge.init()
+    evaluator.registerInternalCommands(bridge)
+
+  test "an effectively unbounded root is capped rather than walked to the end":
+    # The finder walks the tree on the UI thread, and with no project open the
+    # root falls back to the home directory. Scanning "/" stands in for that:
+    # it must come back promptly and admit it truncated, not wedge the caller.
+    let started = getMonoTime()
+    let rows = evaluator.exec(parse("""
+use nide:
+  include project-files-window
+
+project-files-window "/" "zzz-no-such-file"
+""", "<test>"))
+    let elapsedMs = (getMonoTime() - started).inNanoseconds.float64 / 1_000_000.0
+    check rows.kind == List
+    check elapsedMs < 10_000.0
+    let truncated = evaluator.exec(parse("""
+use nide:
+  include project-files-truncated?
+
+project-files-truncated?
+""", "<test>"))
+    check truncated.boolean
+
+
+suite "mode scripts are found, not listed":
+  test "a builtin mode resolves to its file in the source tree":
+    let found = modeSource("nim")
+    check found.source.len > 0
+    check found.path == builtinModeScriptPath("nim")
+    check found.path.fileExists
+
+  test "an unknown mode simply has no script":
+    # No case statement to fall off the end of: a mode with no file has none,
+    # and the buffer stays plain text.
+    check modeSource("no-such-mode-xyz").source.len == 0
+    check modeSource("").source.len == 0
+
+  test "a mode dropped into the config directory is picked up":
+    let path = modeScriptPath("nide-test-only-mode")
+    check not path.fileExists
+    createDir(path.parentDir)
+    writeFile(path, "; test mode\n")
+    try:
+      let found = modeSource("nide-test-only-mode")
+      check found.path == path
+      check found.source.contains("test mode")
+    finally:
+      removeFile(path)
+
+  test "the user config wins over the copy shipped with nide":
+    let path = modeScriptPath("nim")
+    if path.fileExists:
+      skip()   # never clobber a real user mode script
+    else:
+      createDir(path.parentDir)
+      writeFile(path, "; user override\n")
+      try:
+        check modeSource("nim").path == path
+      finally:
+        removeFile(path)

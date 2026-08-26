@@ -1,5 +1,5 @@
 use nide:
-  include rgb set-editor-syntax set-mode-hook syntax regex word span starts-with clear-editor-syntax
+  include defcommand rgb set-editor-syntax set-mode-hook syntax regex word span starts-with clear-editor-syntax
 
 define:
   owlKeywordColor = rgb 178 139 222
@@ -10,7 +10,9 @@ define:
   owlOperatorColor = rgb 222 116 139
   owlConstantColor = rgb 104 184 222
 
-fun owl-enable-highlighting:
+defcommand owl-enable-highlighting:
+  "Turn on Owl syntax highlighting in the active buffer."
+  tags "mode" "owl"
   define:
     owlRules = []:
       starts-with ";" owlCommentColor
@@ -22,7 +24,9 @@ fun owl-enable-highlighting:
       regex "[=+\\-*/<>!?.,|&^%@~]+" owlOperatorColor
   set-editor-syntax (syntax "owl" owlRules)
 
-fun owl-disable-highlighting:
+defcommand owl-disable-highlighting:
+  "Turn off Owl syntax highlighting in the active buffer."
+  tags "mode" "owl"
   clear-editor-syntax
 
 set-mode-hook "onload" "owl-enable-highlighting"

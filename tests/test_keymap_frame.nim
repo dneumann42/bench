@@ -127,6 +127,31 @@ proc settle(ui: var UI, model: var Nide, frames = 3) =
       ui.nideApplication(model)
     ui.finishInputFrame()
 
+suite "buffer modes":
+  setup:
+    let originalFontRelays = fontRelays
+    let originalDrawRelays = drawRelays
+    stubFonts()
+    stubDrawRelays()
+    var model = bootedNide()
+    var ui = newUI()
+
+  teardown:
+    fontRelays = originalFontRelays
+    drawRelays = originalDrawRelays
+
+  test "opening a nim file applies syntax highlighting":
+    # The mode script binds its hook to a plain `fun`, so this also guards the
+    # by-name invocation path that mode hooks depend on.
+    let path = NideSourceDir / "nide.nim"
+    model.openFile(path)
+    ui.settle(model)
+    let id = model.activeBufferID()
+    check model.buffers.hasBuffer(id)
+    check string(model.buffers.buffers[id].fileMode) == "nim"
+    check model.buffers.buffers[id].editor.syntax.rules.len > 0
+    check not model.status.contains("failed")
+
 suite "key sequences drive real frames":
   setup:
     let originalFontRelays = fontRelays
@@ -139,6 +164,34 @@ suite "key sequences drive real frames":
   teardown:
     fontRelays = originalFontRelays
     drawRelays = originalDrawRelays
+
+  test "ctrl-x f works when the key also produces text input":
+    ui.beginInputFrame()
+    ui.keyDown(KeyX, {CtrlPressed})
+    ui.layout:
+      ui.nideApplication(model)
+    ui.finishInputFrame()
+    ui.beginInputFrame()
+    ui.keyDown(KeyF, {})
+    ui.textInput("f")
+    ui.layout:
+      ui.nideApplication(model)
+    ui.finishInputFrame()
+    check model.floatingPanelOpen("find-file")
+
+  test "ctrl-x f still works with idle frames between the two keys":
+    ui.pressKey(model, KeyX, {CtrlPressed})
+    ui.settle(model, 3)
+    ui.pressKey(model, KeyF)
+    ui.settle(model)
+    check model.floatingPanelOpen("find-file")
+    check model.owlErrorApp.lastError == ""
+
+  test "ctrl-x f works when the same key press renders twice":
+    ui.pressKey(model, KeyX, {CtrlPressed})
+    ui.pressKey(model, KeyX, {CtrlPressed})
+    ui.pressKey(model, KeyF)
+    check model.floatingPanelOpen("find-file")
 
   test "ctrl-x f opens the file finder and it draws":
     ui.pressKey(model, KeyX, {CtrlPressed})

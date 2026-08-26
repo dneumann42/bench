@@ -1,5 +1,5 @@
 use nide:
-  include rgb set-editor-syntax set-mode-hook syntax regex word span starts-with contains clear-editor-syntax
+  include defcommand rgb set-editor-syntax set-mode-hook syntax regex word span starts-with contains clear-editor-syntax
 
 define:
   nimKeywordColor = rgb 178 139 222
@@ -11,7 +11,9 @@ define:
   nimProcColor = rgb 110 219 188
   nimPragmaColor = rgb 145 139 232
 
-fun nim-enable-highlighting:
+defcommand nim-enable-highlighting:
+  "Turn on Nim syntax highlighting in the active buffer."
+  tags "mode" "nim"
   define:
     nimRules = []:
       span "#[" "]#" nimCommentColor
@@ -27,7 +29,9 @@ fun nim-enable-highlighting:
       regex "[=+\\-*/<>!?::.,;|&^%@~]+" nimOperatorColor
   set-editor-syntax (syntax "nim" nimRules)
 
-fun nim-disable-highlighting:
+defcommand nim-disable-highlighting:
+  "Turn off Nim syntax highlighting in the active buffer."
+  tags "mode" "nim"
   clear-editor-syntax
 
 set-mode-hook "onload" "nim-enable-highlighting"

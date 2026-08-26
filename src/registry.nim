@@ -32,21 +32,31 @@ type
     id*: string
     description*: string
     interactive*: bool ## offered to a person in the command palette
+    tags*: seq[string] ## free-form labels a caller can filter on
     origin*: CommandOrigin
     value*: Value ## the Owl callable this id resolves to
 
 var registry: OrderedTable[string, NideCommand]
+var generation: int
+
+proc commandGeneration*(): int {.raises: [].} =
+  ## Bumped whenever the set of commands changes, so callers that cache a view
+  ## of the registry can tell when to rebuild it.
+  generation
 
 proc registerCommand*(id, description: string, value: Value,
-    interactive: bool, origin: CommandOrigin) {.raises: [].} =
+    interactive: bool, origin: CommandOrigin,
+    tags: sink seq[string] = @[]) {.raises: [].} =
   ## Add or replace a command. Replacing matters for Owl: reloading a script
   ## re-runs its `defcommand`s, and the newest definition should win.
   registry[id] = NideCommand(id: id, description: description,
-      interactive: interactive, origin: origin, value: value)
+      interactive: interactive, tags: tags, origin: origin, value: value)
+  inc generation
 
 proc registerNativeCommand*(id, description: string, native: NativeCommand,
-    interactive = false) {.raises: [].} =
-  registerCommand(id, description, nativeCommand(native), interactive, NimOrigin)
+    interactive = false, tags: sink seq[string] = @[]) {.raises: [].} =
+  registerCommand(id, description, nativeCommand(native), interactive,
+      NimOrigin, tags)
 
 proc hasCommand*(id: string): bool {.raises: [].} =
   id in registry
@@ -61,6 +71,19 @@ proc commandIds*(): seq[string] {.raises: [].} =
 
 proc commandDescription*(id: string): string {.raises: [].} =
   registry.getOrDefault(id).description
+
+proc commandTags*(id: string): seq[string] {.raises: [].} =
+  registry.getOrDefault(id).tags
+
+proc hasTag*(command: NideCommand, tag: string): bool {.raises: [].} =
+  tag in command.tags
+
+iterator commandsTagged*(tag: string): NideCommand =
+  ## Every command carrying `tag`, ordered by id.
+  for id in commandIds():
+    let command = registry.getOrDefault(id)
+    if command.hasTag(tag):
+      yield command
 
 proc commandValue*(id: string): Value {.raises: [EvaluatorError].} =
   if id notin registry:
@@ -84,6 +107,10 @@ proc defineRegisteredCommands*(module: var NativeModule) {.raises: [].} =
 proc invoke*(env: Environment, id: string,
     arguments: openArray[Value] = []): Value {.raises: [EvaluatorError].} =
   ## Run a command by id with already-evaluated arguments.
+  ##
+  ## Only the registry is consulted. An Owl `fun` or `command` is a private
+  ## callable, not a Nide command, and is deliberately not reachable here --
+  ## anything meant to be invoked by name declares itself with `defcommand`.
   ##
   ## Owl commands take unevaluated syntax, so each argument is bound to a
   ## private symbol in a scratch child scope and passed as a reference to it --
@@ -168,6 +195,10 @@ proc commandEntry(command: NideCommand): Value {.raises: [].} =
   entries["description"] = text(command.description)
   entries["interactive"] = boolean(command.interactive)
   entries["origin"] = text($command.origin)
+  var tags: seq[Value]
+  for tag in command.tags:
+    tags.add text(tag)
+  entries["tags"] = list(tags)
   dictionary(entries)
 
 proc defcommandCommand(
@@ -187,13 +218,28 @@ proc defcommandCommand(
   if body.len == 0 or body[0].kind != String or body[0].stringValue.len == 0:
     raise newException(EvaluatorError, "command '" & id &
         "' has no description; every command must document itself")
-  let command = closureCommand(parameters, body[1 .. ^1], env,
+  # After the description a command may declare tags, which are metadata
+  # rather than something to run: `tags "mode" "nim"`.
+  var
+    bodyStart = 1
+    tags: seq[string]
+  if body.len > bodyStart and body[bodyStart].kind == Command and
+      body[bodyStart].callee.kind == Symbol and
+      body[bodyStart].callee.symbol == "tags" and
+      body[bodyStart].layout == NoLayout:
+    for argument in body[bodyStart].arguments:
+      if argument.kind != String:
+        raise newException(EvaluatorError, "command '" & id &
+            "': tags must be string literals")
+      tags.add argument.stringValue
+    inc bodyStart
+  let command = closureCommand(parameters, body[bodyStart .. ^1], env,
       evaluatesArguments = true, acceptsBlock = false)
   env.define(id, command)
   # The palette invokes with no arguments, so only a command that needs none
   # can be offered there.
   registerCommand(id, body[0].stringValue, command,
-      interactive = parameters.len == 0, OwlOrigin)
+      interactive = parameters.len == 0, OwlOrigin, tags)
   command
 
 proc runCommandCommand(
@@ -232,6 +278,35 @@ proc describeCommandCommand(
   if arguments.len != 1:
     raise newException(EvaluatorError, "describe-command expects one command id")
   text(commandDescription(env.requireText(arguments[0], "command id")))
+
+proc commandTagsCommand(
+    env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+    body: seq[SyntaxNode],
+): Value {.nideCommand: "command-tags", raises: [EvaluatorError].} =
+  ## The tags a command was declared with, or an empty list.
+  discard layout
+  discard body
+  if arguments.len != 1:
+    raise newException(EvaluatorError, "command-tags expects one command id")
+  var tags: seq[Value]
+  for tag in commandTags(env.requireText(arguments[0], "command id")):
+    tags.add text(tag)
+  list(tags)
+
+proc commandsTaggedCommand(
+    env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+    body: seq[SyntaxNode],
+): Value {.nideCommand: "commands-tagged", raises: [EvaluatorError].} =
+  ## Every command carrying a tag, as records of id, description, interactive,
+  ## origin and tags.
+  discard layout
+  discard body
+  if arguments.len != 1:
+    raise newException(EvaluatorError, "commands-tagged expects one tag")
+  var entries: seq[Value]
+  for command in commandsTagged(env.requireText(arguments[0], "tag")):
+    entries.add commandEntry(command)
+  list(entries)
 
 proc commandsCommand(
     env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
