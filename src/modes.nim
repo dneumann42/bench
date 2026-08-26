@@ -14,6 +14,8 @@ const
   BuiltinNimModeSource* = staticRead"modes/nim.owl"
   BuiltinOwlModeSource* = staticRead"modes/owl.owl"
   ModesDirName* = "modes"
+  ViewersDirName* = "viewers"
+  SourceDirName* = currentSourcePath().parentDir
 
 proc init*(T: typedesc[ModeRegistry]): T =
   T(
@@ -25,6 +27,9 @@ proc init*(T: typedesc[ModeRegistry]): T =
 
 proc nideModesDir*(): string =
   getConfigDir() / "nide" / ModesDirName
+
+proc nideViewersDir*(): string =
+  getConfigDir() / "nide" / ViewersDirName
 
 proc normalizeExt(ext: string): string =
   result = ext.strip.toLowerAscii()
@@ -170,3 +175,36 @@ proc modeSource*(mode: string): tuple[source, path: string] =
   if source.len > 0:
     return (source, "<builtin mode:" & mode.normalizeMode() & ">")
   ("", "")
+
+proc viewerScriptPath*(mode: string): string =
+  nideViewersDir() / (mode.normalizeMode() & ".owl")
+
+proc builtinViewerScriptPath(mode: string): string =
+  SourceDirName / ViewersDirName / (mode.normalizeMode() & ".owl")
+
+proc hasModeViewer*(mode: string): bool =
+  let normalized = mode.normalizeMode()
+  if normalized.len == 0:
+    return false
+  fileExists(normalized.viewerScriptPath()) or
+    fileExists(normalized.builtinViewerScriptPath())
+
+proc viewerForMode*(mode: string): string =
+  let normalized = mode.normalizeMode()
+  if normalized.hasModeViewer():
+    normalized
+  else:
+    "text"
+
+proc viewerSource*(mode: string): tuple[source, path, widget: string] =
+  let normalized = mode.normalizeMode()
+  let userPath = normalized.viewerScriptPath()
+  if fileExists(userPath):
+    return (readFile(userPath), userPath, "nide-" & normalized & "-file-viewer")
+  let builtinPath = normalized.builtinViewerScriptPath()
+  if fileExists(builtinPath):
+    return (readFile(builtinPath), builtinPath, "nide-" & normalized & "-file-viewer")
+  let defaultPath = "text".builtinViewerScriptPath()
+  if fileExists(defaultPath):
+    return (readFile(defaultPath), defaultPath, "nide-text-file-viewer")
+  ("", "", "")

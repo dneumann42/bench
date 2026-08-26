@@ -1,0 +1,54 @@
+use nide/viewers:
+  include active-buffer-name active-buffer-path
+
+widget nide-image-file-viewer bufferID:
+  define:
+    key = (eval bufferID)
+    path = (active-buffer-path (eval bufferID))
+    name = (active-buffer-name (eval bufferID))
+    canvasID = (id "image-viewer" key "canvas")
+  events:
+    when (clicked (id "image-viewer" key "zoom-out")):
+      imageViewerZoom canvasID 0.833333
+    when (clicked (id "image-viewer" key "zoom-reset")):
+      imageViewerReset canvasID
+    when (clicked (id "image-viewer" key "zoom-in")):
+      imageViewerZoom canvasID 1.2
+  column (id "image-viewer" key):
+    width = fill
+    height = fill
+    gap = 0
+    alignItems = AlignStretch
+    row (id "image-viewer" key "toolbar"):
+      width = fill
+      height = fixed 32
+      padding = (insets 6 4 6 4)
+      gap = 8
+      alignItems = AlignCenter
+      background = (color 24 28 32)
+      label (id "image-viewer" key "name") name:
+        width = fill
+        height = fit
+        textScroll = true
+      button (id "image-viewer" key "zoom-out") "-":
+        width = fixed 30
+        height = fixed 24
+        buttonPadding = 2
+      button (id "image-viewer" key "zoom-reset") "1:1":
+        width = fixed 42
+        height = fixed 24
+        buttonPadding = 2
+      button (id "image-viewer" key "zoom-in") "+":
+        width = fixed 30
+        height = fixed 24
+        buttonPadding = 2
+    panel (id "image-viewer" key "body"):
+      width = fill
+      height = fill
+      padding = 0
+      gap = 0
+      alignItems = AlignStretch
+      background = (color 18 21 24)
+      imageViewer canvasID path:
+        width = fill
+        height = fill

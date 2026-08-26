@@ -1,0 +1,7 @@
+use nide/viewers:
+  include active-buffer-editor
+
+widget nide-text-file-viewer bufferID:
+  define:
+    key = (eval bufferID)
+  active-buffer-editor key key false

@@ -78,6 +78,18 @@ type
     inputDriver: string
     cursorStyle: string
 
+  NideViewerBuffer = object
+    id: BufferID
+    path: string
+    name: string
+    mode: string
+    editor: EditorState
+
+  NideViewerContext = ref object
+    buffers: Table[BufferID, NideViewerBuffer]
+    currentBufferID: BufferID
+    pendingEditorFocus: BufferID
+
   Nide = object
     evaluator: Evaluator
     uiRuntime: NestOwlRuntime
@@ -112,6 +124,7 @@ type
     pendingFileAction: PendingFileAction
     pendingPath: string
     pendingEditorFocus: BufferID
+    viewerContext: NideViewerContext
     status: string
 
 const SpinnerSize = 18
@@ -219,6 +232,11 @@ proc init(T: typedesc[Nide]): T =
       floatingHeight: 680.0,
       processJobs: @[],
       nextProcessJob: 1,
+      viewerContext: NideViewerContext(
+        buffers: initTable[BufferID, NideViewerBuffer](),
+        currentBufferID: InvalidBufferID,
+        pendingEditorFocus: InvalidBufferID,
+      ),
       status: "Ready")
   result.uiRuntime = uiRuntime
   result.owlErrorApp = NestOwlApp(rootPath: NideSourceDir / "load.owl",
@@ -257,6 +275,7 @@ proc ensureNideUserFiles(model: var Nide) =
   let dir = nideConfigDir()
   createDir(dir)
   createDir(nideModesDir())
+  createDir(nideViewersDir())
 
   let projectsPath = nideProjectsPath()
   if not fileExists(projectsPath):
@@ -818,6 +837,7 @@ proc applyFileMode(model: var Nide, id: BufferID) =
   let buffer = model.buffers.buffers[id]
   let mode = model.modeRegistry.detectMode(buffer.path, buffer.editor.text)
   model.buffers.buffers[id].fileMode = buffers.FileMode(mode)
+  model.buffers.buffers[id].viewer = mode.viewerForMode()
   if mode.len == 0:
     return
   let script = mode.modeSource()
@@ -1022,6 +1042,7 @@ proc buffersValue(model: Nide): Value =
     entries["title"] = text(title)
     entries["path"] = text(buffer.path)
     entries["mode"] = text(string(buffer.fileMode))
+    entries["viewer"] = text(buffer.viewer)
     entries["dirty"] = boolean(buffer.dirty())
     values.add dictionary(entries)
   list(values)
@@ -1043,6 +1064,182 @@ proc activeBufferMode(model: Nide): string =
     string(model.buffers.buffers[id].fileMode)
   else:
     ""
+
+proc bufferViewer(model: Nide, id: BufferID): string =
+  if model.buffers.hasBuffer(id):
+    model.buffers.buffers[id].viewer
+  else:
+    "text"
+
+proc refreshViewerContext(model: var Nide, bufferID: BufferID) =
+  model.viewerContext.buffers.clear()
+  model.viewerContext.currentBufferID = bufferID
+  model.viewerContext.pendingEditorFocus = model.pendingEditorFocus
+  for id, buffer in model.buffers.buffers.pairs:
+    model.viewerContext.buffers[id] = NideViewerBuffer(
+      id: id,
+      path: buffer.path,
+      name: buffer.name,
+      mode: string(buffer.fileMode),
+      editor: buffer.editor,
+    )
+
+proc evalOptionalText(env: owl.Environment, arguments: seq[SyntaxNode],
+    index: int, fallback: string): string {.raises: [EvaluatorError].} =
+  if index >= arguments.len:
+    return fallback
+  let value = env.eval(arguments[index])
+  case value.kind
+  of Text:
+    value.text
+  of Number:
+    if value.number == value.number.int.float:
+      $value.number.int
+    else:
+      $value.number
+  of Boolean:
+    if value.boolean: "true" else: "false"
+  else:
+    fallback
+
+proc evalOptionalBufferID(context: NideViewerContext, env: owl.Environment,
+    arguments: seq[SyntaxNode], index: int): BufferID {.raises: [EvaluatorError].} =
+  if index >= arguments.len:
+    let id = context.currentBufferID
+    if context.buffers.hasKey(id):
+      return id
+    raise newException(EvaluatorError, "no viewer buffer is currently rendering")
+  let candidate = env.evalOptionalText(arguments, index, "")
+  if context.buffers.hasKey(candidate):
+    return candidate
+  raise newException(EvaluatorError, "unknown viewer buffer id: " & candidate)
+
+proc evalOptionalBool(env: owl.Environment, arguments: seq[SyntaxNode],
+    index: int, fallback: bool): bool {.raises: [EvaluatorError].} =
+  if index >= arguments.len:
+    return fallback
+  let value = env.eval(arguments[index])
+  case value.kind
+  of Boolean:
+    value.boolean
+  of Number:
+    value.number != 0
+  of Text:
+    value.text.len > 0 and value.text != "false"
+  else:
+    fallback
+
+proc registerViewerCommands(context: NideViewerContext, runtime: NestOwlRuntime) =
+  var module = nativeModule"nide/viewers"
+
+  module.defineNative("active-buffer-path", proc(
+      env: owl.Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard env
+    discard layout
+    discard bodyNodes
+    if arguments.len > 1:
+      raise newException(EvaluatorError,
+          "active-buffer-path expects optional buffer id")
+    let id = context.evalOptionalBufferID(env, arguments, 0)
+    text(context.buffers.getOrDefault(id).path)
+  )
+
+  module.defineNative("active-buffer-name", proc(
+      env: owl.Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard env
+    discard layout
+    discard bodyNodes
+    if arguments.len > 1:
+      raise newException(EvaluatorError,
+          "active-buffer-name expects optional buffer id")
+    let id = context.evalOptionalBufferID(env, arguments, 0)
+    text(context.buffers.getOrDefault(id).name)
+  )
+
+  module.defineNative("active-buffer-text", proc(
+      env: owl.Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard env
+    discard layout
+    discard bodyNodes
+    if arguments.len > 1:
+      raise newException(EvaluatorError,
+          "active-buffer-text expects optional buffer id")
+    let id = context.evalOptionalBufferID(env, arguments, 0)
+    text(context.buffers.getOrDefault(id).editor.text)
+  )
+
+  module.defineNative("active-buffer-mode", proc(
+      env: owl.Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard env
+    discard layout
+    discard bodyNodes
+    if arguments.len > 1:
+      raise newException(EvaluatorError,
+          "active-buffer-mode expects optional buffer id")
+    let id = context.evalOptionalBufferID(env, arguments, 0)
+    text(context.buffers.getOrDefault(id).mode)
+  )
+
+  module.defineNative("active-buffer-editor", proc(
+      env: owl.Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len > 3:
+      raise newException(EvaluatorError,
+          "active-buffer-editor expects optional buffer id, id, and readOnly")
+    let
+      explicitBuffer = arguments.len == 3
+      id =
+        if explicitBuffer:
+          context.evalOptionalBufferID(env, arguments, 0)
+        else:
+          context.currentBufferID
+    if not context.buffers.hasKey(id):
+      return nothing()
+    try:
+      let
+        key = env.evalOptionalText(arguments, if explicitBuffer: 1 else: 0, id)
+        readOnly = env.evalOptionalBool(arguments, if explicitBuffer: 2 else: 1,
+            false)
+        buffer = context.buffers.getOrDefault(id)
+        editorID = runtime.requireCurrentUi().id("viewer-editor", id, key)
+        syntaxName = buffer.editor.syntax.name
+      runtime.requireCurrentUi().textEditor(editorID,
+          buffer.editor, width = fill(min = MinPaneWidth),
+          height = fill(min = MinPaneHeight), fontName = "editor",
+          lineNumbers = true, scrollbars = true, readOnly = readOnly,
+          syntax = syntaxName)
+      if context.pendingEditorFocus == id:
+        runtime.requireCurrentUi().focus(editorID)
+        context.pendingEditorFocus = InvalidBufferID
+    except KeyError:
+      discard
+    except Exception as error:
+      raise newException(EvaluatorError, error.msg)
+    nothing()
+  )
+
+  runtime.evaluator.registerModule(module)
 
 proc publishActiveEditorData(model: Nide, bridge: NideOwlBridge) =
   let editor = model.activeEditorSnapshot()
@@ -1670,6 +1867,55 @@ proc consumeRuntimeError(model: var Nide, context: string): bool =
     return true
   false
 
+proc renderFallbackTextEditor(ui: var UI, model: var Nide, paneID: PaneID,
+    bufferID: BufferID) =
+  let editorID = ui.id("editor", bufferID)
+  ui.textEditor(editorID, model.buffers.buffers[bufferID].editor,
+      width = fill(min = MinPaneWidth), height = fill(min = MinPaneHeight),
+      fontName = "editor", lineNumbers = true, scrollbars = true,
+      syntax = model.buffers.buffers[bufferID].editor.syntax.name)
+  if model.pendingEditorFocus == bufferID and paneID == model.panes.activePane:
+    ui.focus(editorID)
+    model.pendingEditorFocus = InvalidBufferID
+
+proc renderBufferViewer(ui: var UI, model: var Nide, paneID: PaneID,
+    bufferID: BufferID) =
+  if not model.buffers.hasBuffer(bufferID):
+    return
+  let
+    viewer = model.bufferViewer(bufferID)
+    script = viewer.viewerSource()
+  if viewer == "text":
+    ui.renderFallbackTextEditor(model, paneID, bufferID)
+    return
+  if script.source.len == 0 or script.path.len == 0:
+    ui.renderFallbackTextEditor(model, paneID, bufferID)
+    return
+  model.refreshViewerContext(bufferID)
+  registerViewerCommands(model.viewerContext, model.uiRuntime)
+  model.uiRuntime.loadedModules.excl script.path.normalizedPath
+  var renderFailed = false
+  model.uiRuntime.evaluator.env.bindText("nide-viewer-buffer-id", bufferID)
+  try:
+    model.uiRuntime.renderWidget(ui, script.path, script.widget, [bufferID])
+  except CatchableError as error:
+    renderFailed = true
+    model.status = "Viewer " & viewer & " failed; see Owl error dialog"
+    model.owlErrorApp.launchOwlErrorDialog(ErrorDetails(
+      message: "Viewer " & viewer & " failed: " & error.msg,
+      primary: ErrorLocation(path: script.path),
+    ))
+  finally:
+    model.pendingEditorFocus = model.viewerContext.pendingEditorFocus
+  if renderFailed:
+    model.uiRuntime.evaluator.env.bindText(VarStatus, model.status)
+    return
+  if model.consumeRuntimeError("Viewer " & viewer):
+    model.uiRuntime.evaluator.env.bindText(VarStatus, model.status)
+    return
+  model.processBridgeRequests()
+  ui.flushModelRedraw(model)
+
 proc layoutPane(ui: var UI, model: var Nide, paneID: PaneID,
     floatingContent = false) =
   if paneID == InvalidPaneID or paneID notin model.panes.panes:
@@ -1709,14 +1955,7 @@ proc layoutPane(ui: var UI, model: var Nide, paneID: PaneID,
             height = fixed(24), buttonVariant = ButtonIcon, fontName = "icon"):
           discard model.closePane(paneID)
         ui.tooltip(ui.id("paneClose", paneID), "Close pane")
-      ui.textEditor(editorID, model.buffers.buffers[pane.bufferID].editor,
-          width = fill(min = MinPaneWidth), height = fill(min = MinPaneHeight),
-          fontName = "editor", lineNumbers = true, scrollbars = true,
-          syntax = model.buffers.buffers[pane.bufferID].editor.syntax.name)
-      if model.pendingEditorFocus == pane.bufferID and
-          paneID == model.panes.activePane:
-        ui.focus(editorID)
-        model.pendingEditorFocus = InvalidBufferID
+      ui.renderBufferViewer(model, paneID, pane.bufferID)
 
     if ui.clicked(panelID) or ui.focused(editorID):
       model.panes.focus(paneID)
@@ -2078,5 +2317,11 @@ proc start =
 
   runApp(config, nide, nideApplication)
 
-when isMainModule:
-  start()
+when isMainModule and not defined(nideNoMain):
+  let args = commandLineParams()
+  if args.len >= 2 and args[0] == "error-dialog-json":
+    runOwlErrorDialog(errorDetailsFromJson(args[1]))
+  elif args.len >= 2 and args[0] == "error-dialog":
+    runOwlErrorDialog(args[1])
+  else:
+    start()

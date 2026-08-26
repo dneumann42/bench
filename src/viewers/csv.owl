@@ -1,0 +1,140 @@
+use nide/viewers:
+  include active-buffer-editor active-buffer-name active-buffer-text
+
+fun text-split-at source delimiter start parts:
+  define:
+    found = (textFind source delimiter start)
+    stop = (length source)
+  if (= found -1):
+    append-value parts (textSlice source start stop)
+  else:
+    text-split-at source delimiter (+ found (length delimiter)) (append-value parts (textSlice source start found))
+
+fun text-split source delimiter:
+  text-split-at source delimiter 0 ([])
+
+fun csv-cells values:
+  define:
+    cells = ([])
+    cellIndex = 0
+  for value (iter values):
+    define:
+      cell = {}:
+        index = cellIndex
+        value = value
+    append cells cell
+    += cellIndex 1
+  cells
+
+fun csv-row line rowIndex:
+  {}:
+    index = rowIndex
+    cells = (csv-cells (text-split line ","))
+
+fun csv-rows-from-lines lines rowIndex rows:
+  if (empty? lines):
+    rows
+  else:
+    csv-rows-from-lines (drop-front lines 1) (+ rowIndex 1) (append-value rows (csv-row (first lines) rowIndex))
+
+fun csv-rows source:
+  csv-rows-from-lines (textLines source) 0 ([])
+
+fun csv-cell-id key prefix row column:
+  id "csv-viewer" key prefix (string row) (string column)
+
+fun csv-table-cell key prefix row cell:
+  tableCell (csv-cell-id key prefix row cell.index):
+    width = fixed 160
+    height = fixed 26
+    padding = (insets 6 3 6 3)
+    label (id "csv-viewer" key prefix "label" (string row) (string cell.index)) cell.value:
+      width = fill
+      height = fit
+      fontName = "editor"
+      textScroll = true
+
+fun csv-table-row key row:
+  tableRow (id "csv-viewer" key "row" (string row.index)):
+    width = fit
+    height = fixed 26
+    for cell (iter row.cells):
+      csv-table-cell key "cell" row.index cell
+
+fun csv-table-header key row:
+  tableHeader (id "csv-viewer" key "header"):
+    width = fit
+    height = fixed 28
+    for cell (iter row.cells):
+      csv-table-cell key "header-cell" "header" cell
+
+widget nide-csv-table-view key rows:
+  define:
+    keyText = (eval key)
+    rowValues = (eval rows)
+  column (id "csv-viewer" keyText "table-scroll"):
+    width = fill
+    height = fill
+    scrollX = true
+    scrollY = true
+    alignItems = AlignStretch
+    if (empty? rowValues):
+      column (id "csv-viewer" keyText "empty"):
+        width = fill
+        height = fill
+        justifyContent = JustifyCenter
+        alignItems = AlignCenter
+        label (id "csv-viewer" keyText "empty-label") "No CSV rows":
+          width = fit
+          height = fit
+    else:
+      table (id "csv-viewer" keyText "table"):
+        width = fit
+        height = fit
+        csv-table-header keyText (first rowValues)
+        for row (iter (drop-front rowValues 1)):
+          csv-table-row keyText row
+
+widget nide-csv-raw-view key:
+  define:
+    keyText = (eval key)
+  active-buffer-editor keyText (string keyText ":raw") false
+
+fun nide-csv-view-body selected key rows:
+  cond:
+    when (= selected 0):
+      nide-csv-table-view key rows
+    when true:
+      nide-csv-raw-view key
+
+widget nide-csv-file-viewer bufferID:
+  define:
+    key = (eval bufferID)
+    rows = (csv-rows (active-buffer-text (eval bufferID)))
+    labels = []:
+      "Table"
+      "Raw CSV"
+  state (string "csv-viewer:" key):
+    selected = 0
+
+  column (id "csv-viewer" key):
+    width = fill
+    height = fill
+    gap = 0
+    alignItems = AlignStretch
+    row (id "csv-viewer" key "toolbar"):
+      width = fill
+      height = fixed 34
+      padding = (insets 6 4 6 4)
+      gap = 8
+      alignItems = AlignCenter
+      background = (color 24 28 32)
+      tabs (id "csv-viewer" key "tabs") labels selected:
+        width = fixed 240
+        height = fit
+      label (id "csv-viewer" key "name") (active-buffer-name (eval bufferID)):
+        width = fill
+        height = fit
+        textScroll = true
+
+    nide-csv-view-body selected key rows
