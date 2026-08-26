@@ -83,6 +83,7 @@ fun dialog-list-keybindings previousCommand nextCommand:
 fun file-menu:
   toolbar-menu "file" "File":
     toolbar-item "file.newFile" "New File" "file-new"
+    toolbar-item "file.commandPalette" "Command Palette" "command-palette"
     toolbar-item "file.openFile" "Find File" "find-file"
     toolbar-item "file.openSystemFile" "Open File Dialog" "file-open"
     toolbar-item "file.openBuffer" "Find Buffer" "find-buffer"
@@ -114,6 +115,7 @@ toolbars:
 panels:
   dock-panel "projects" "Projects" "left" "projects-panel.owl" "projects-panel" false 280
   dock-panel "files" "Files" "left" "file-explorer-panel.owl" "file-explorer-panel" false 320
+  dock-panel "command-palette" "Command Palette" "floating" "command-palette-panel.owl" "command-palette-panel" false 840
   dock-panel "find-file" "Find File" "floating" "find-file-panel.owl" "find-file-panel" false 720
   dock-panel "find-buffer" "Find Buffer" "floating" "find-buffer-panel.owl" "find-buffer-panel" false 720
 

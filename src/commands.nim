@@ -71,6 +71,47 @@ proc bindTextList*(env: Environment, name: string, values: openArray[string]) =
 proc bindEmptyList*(env: Environment, name: string) =
   env.bindValue(name, list(@[]))
 
+proc valueText(value: Value): string =
+  case value.kind
+  of Text:
+    value.text
+  of Number:
+    if value.number == value.number.int.float:
+      $value.number.int
+    else:
+      $value.number
+  of Boolean:
+    if value.boolean: "true" else: "false"
+  else:
+    ""
+
+proc stateField(env: Environment, key: string): string =
+  try:
+    let state = env.get(VarState)
+    if state.kind == Dictionary and state.entries.hasKey(key):
+      valueText(state.entries.getOrDefault(key))
+    else:
+      ""
+  except EvaluatorError:
+    ""
+
+proc stateNumber(env: Environment, key: string): float64 =
+  try:
+    let state = env.get(VarState)
+    if state.kind == Dictionary and state.entries.hasKey(key):
+      let value = state.entries.getOrDefault(key)
+      case value.kind
+      of Number:
+        value.number
+      of Text:
+        parseFloat(value.text)
+      else:
+        0
+    else:
+      0
+  except CatchableError:
+    0
+
 proc stateSnapshot*(
     bufferIDs: openArray[string],
     activeBufferPath,
@@ -253,6 +294,53 @@ proc textListContains(items: openArray[string], target: string): bool =
   for item in items:
     if item == target:
       return true
+
+proc dictionaryText(value: Value, key: string): string =
+  if value.kind != Dictionary or not value.entries.hasKey(key):
+    return ""
+  let entry = value.entries.getOrDefault(key)
+  if entry.kind == Text:
+    entry.text
+  else:
+    ""
+
+proc defineCommand(module: var NativeModule, commandID, description: string,
+    implementation: NativeCommand) =
+  module.define(commandID, nativeCommand(implementation, id = commandID,
+      description = description, interactive = true))
+
+proc defineBridgeRequest(module: var NativeModule, commandID,
+    requestName: string,
+
+bridge: NideOwlBridge, expectedArgumentCounts: openArray[int], description = "",
+    interactive = false) =
+  let counts = @expectedArgumentCounts
+  let implementation = proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    var valid = false
+    for count in counts:
+      if arguments.len == count:
+        valid = true
+        break
+    if not valid:
+      raise newException(EvaluatorError, commandID & " got " &
+          $arguments.len & " arguments")
+    var values: seq[Value]
+    for argument in arguments:
+      values.add env.eval(argument)
+    bridge.request(requestName, values)
+    boolean(true)
+  if interactive:
+    module.define(commandID, nativeCommand(implementation, id = commandID,
+        description = description, interactive = true))
+  else:
+    module.defineNative(commandID, implementation)
 
 proc detectFileIconMode(): string {.raises: [].} =
   for directory in [
@@ -699,6 +787,58 @@ proc defineFileExplorerCommands(module: var NativeModule,
       raise newException(EvaluatorError, error.msg)
   )
 
+  module.defineNative("command-palette-rows", proc(
+      env: Environment,
+      arguments: seq[SyntaxNode],
+      layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len notin {2, 3}:
+      raise newException(EvaluatorError,
+          "command-palette-rows expects commands, query, and optional selected id")
+    let
+      commands = env.eval(arguments[0])
+      query = env.evalTextArgument(arguments, 1, "command-palette-rows").toLowerAscii()
+      selectedID =
+        if arguments.len == 3:
+          env.evalTextArgument(arguments, 2, "command-palette-rows")
+        else:
+          ""
+    if commands.kind != List:
+      raise newException(EvaluatorError, "command-palette-rows expects a list")
+    var ranked: seq[tuple[score: int, id: string, row: Value]]
+    for row in commands.items:
+      if row.kind != Dictionary:
+        continue
+      let searchable = (
+        row.dictionaryText("id") & " " &
+        row.dictionaryText("description") & " " &
+        row.dictionaryText("keybindings")
+      ).toLowerAscii()
+      if not matchesFuzzy(searchable, query):
+        continue
+      ranked.add((fuzzyScore(searchable, query), row.dictionaryText("id"), row))
+    ranked.sort(proc(a, b: tuple[score: int, id: string, row: Value]): int =
+      result = cmp(b.score, a.score)
+      if result != 0:
+        return
+      result = cmp(a.id.toLowerAscii(), b.id.toLowerAscii())
+    )
+    var rows: seq[Value]
+    for index, candidate in ranked:
+      if index >= MaxFinderRows:
+        break
+      var row = candidate.row
+      row.entries["selected"] = boolean(
+        row.dictionaryText("id") == selectedID or
+        (selectedID.len == 0 and index == 0)
+      )
+      rows.add row
+    list(rows)
+  )
+
 proc defineStringCommand(module: var NativeModule) =
   module.defineNative("string", proc(
       env: Environment,
@@ -856,34 +996,6 @@ proc defineBridgeGetter(module: var NativeModule, commandID, getterName: string,
     if arguments.len != 0:
       raise newException(EvaluatorError, commandID & " expects no arguments")
     bridge.bridgeGet(getterName)
-  )
-
-proc defineBridgeRequest(module: var NativeModule, commandID,
-    requestName: string,
-
-bridge: NideOwlBridge, expectedArgumentCounts: openArray[int]) =
-  let counts = @expectedArgumentCounts
-  module.defineNative(commandID, proc(
-      env: Environment,
-      arguments: seq[SyntaxNode],
-      layout: LayoutKind,
-      bodyNodes: seq[SyntaxNode],
-  ): Value {.raises: [EvaluatorError].} =
-    discard layout
-    discard bodyNodes
-    var valid = false
-    for count in counts:
-      if arguments.len == count:
-        valid = true
-        break
-    if not valid:
-      raise newException(EvaluatorError, commandID & " got " &
-          $arguments.len & " arguments")
-    var values: seq[Value]
-    for argument in arguments:
-      values.add env.eval(argument)
-    bridge.request(requestName, values)
-    boolean(true)
   )
 
 proc defineFileSystemCommands(module: var NativeModule) =
@@ -1074,6 +1186,273 @@ proc registerInternalCommands*(evaluator: var Evaluator,
   nide.defineBridgeGetter("open-build-launch-tab", "open-build-launch-tab", bridge)
   nide.defineBridgeGetter("open-run-launch-tab", "open-run-launch-tab", bridge)
   nide.defineBridgeGetter("open-check-launch-tab", "open-check-launch-tab", bridge)
+  nide.defineCommand("file-new", "Create a new file.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard env
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "file-new expects no arguments")
+    env.requestAction(bridge, ActionNewFile)
+    boolean(true)
+  )
+  nide.defineCommand("file-open", "Open a file using the system file dialog.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "file-open expects no arguments")
+    env.requestAction(bridge, ActionOpenFileDialog)
+    boolean(true)
+  )
+  nide.defineCommand("find-file", "Open the file finder.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "find-file expects no arguments")
+    bridge.request("panel.open-floating", [text("find-file")])
+    boolean(true)
+  )
+  nide.defineCommand("find-buffer", "Open the buffer finder.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "find-buffer expects no arguments")
+    bridge.request("panel.open-floating", [text("find-buffer")])
+    boolean(true)
+  )
+  nide.defineCommand("buffer-open", "Open the buffer switcher.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard env
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "buffer-open expects no arguments")
+    bridge.request("panel.open-floating", [text("find-buffer")])
+    boolean(true)
+  )
+  nide.defineCommand("command-palette", "Open the command palette.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard env
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "command-palette expects no arguments")
+    bridge.request("panel.open-floating", [text("command-palette")])
+    boolean(true)
+  )
+  nide.defineCommand("file-save", "Save the active buffer.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "file-save expects no arguments")
+    let path = env.stateField("active-buffer-path")
+    if path.len == 0:
+      env.requestAction(bridge, ActionSaveFileAsDialog)
+      return boolean(true)
+    try:
+      let content = env.stateField("active-buffer-text")
+      var stream = openFileStream(path, fmWrite)
+      if stream.isNil:
+        raise newException(IOError, "could not open " & path)
+      defer: stream.close()
+      stream.write(content)
+      env.requestAction(bridge, ActionMarkBufferSaved)
+      env.set(VarStatus, text("Saved " & path))
+      boolean(true)
+    except CatchableError as error:
+      raise newException(EvaluatorError, error.msg)
+  )
+  nide.defineCommand("file-save-as", "Save the active buffer to a new path.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "file-save-as expects no arguments")
+    env.requestAction(bridge, ActionSaveFileAsDialog)
+    boolean(true)
+  )
+  nide.defineBridgeRequest("project-open", "project.pick-directory", bridge, [0],
+      description = "Open a project directory.", interactive = true)
+  nide.defineCommand("project-run", "Run the active project.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "project-run expects no arguments")
+    env.set(VarStatus, text("Run project is not implemented"))
+    boolean(true)
+  )
+  nide.defineCommand("project-build", "Build the active project.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "project-build expects no arguments")
+    env.set(VarStatus, text("Build project is not implemented"))
+    boolean(true)
+  )
+  nide.defineCommand("project-settings", "Open project settings.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "project-settings expects no arguments")
+    env.set(VarStatus, text("Project settings are not implemented"))
+    boolean(true)
+  )
+  nide.defineCommand("toggle-projects-panel", "Toggle the projects panel.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard env
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "toggle-projects-panel expects no arguments")
+    bridge.request("panel.toggle", [text("projects")])
+    boolean(true)
+  )
+  nide.defineCommand("toggle-file-explorer-panel",
+      "Toggle the file explorer panel.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard env
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError,
+          "toggle-file-explorer-panel expects no arguments")
+    bridge.request("panel.toggle", [text("files")])
+    boolean(true)
+  )
+  nide.defineBridgeRequest("pane-split-column", "pane.split-column", bridge, [0],
+      description = "Split the current pane into columns.", interactive = true)
+  nide.defineBridgeRequest("pane-split-row", "pane.split-row", bridge, [0],
+      description = "Split the current pane into rows.", interactive = true)
+  nide.defineBridgeRequest("pane-unsplit", "pane.unsplit", bridge, [0],
+      description = "Remove the current pane split.", interactive = true)
+  nide.defineCommand("editor-line-start",
+      "Move the cursor to the start of the current line.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "editor-line-start expects no arguments")
+    bridge.request("active-editor.command", [
+      text("set-line-column"),
+      number(env.stateNumber("active-editor-line")),
+      number(1),
+    ])
+    boolean(true)
+  )
+  nide.defineCommand("editor-line-end",
+      "Move the cursor to the end of the current line.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "editor-line-end expects no arguments")
+    bridge.request("active-editor.command", [
+      text("set-line-column"),
+      number(env.stateNumber("active-editor-line")),
+      number(100000000),
+    ])
+    boolean(true)
+  )
+  nide.defineCommand("editor-buffer-start", "Move the cursor to the start of the buffer.",
+      proc(env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "editor-buffer-start expects no arguments")
+    bridge.request("active-editor.command", [text("set-cursor"), number(0)])
+    boolean(true)
+  )
+  nide.defineCommand("editor-buffer-end", "Move the cursor to the end of the buffer.",
+      proc(env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "editor-buffer-end expects no arguments")
+    bridge.request("active-editor.command", [
+      text("set-cursor"),
+      number(env.stateNumber("active-editor-text-length")),
+    ])
+    boolean(true)
+  )
+  for (id, editorCommand, description) in [
+    ("editor-forward-word", "word-forward", "Move the cursor forward by one word."),
+    ("editor-backward-word", "word-backward", "Move the cursor backward by one word."),
+    ("editor-delete-word-forward", "delete-word-forward", "Delete the word after the cursor."),
+    ("editor-delete-word-backward", "delete-word-backward", "Delete the word before the cursor."),
+    ("editor-delete-backward", "delete-backward", "Delete the character before the cursor."),
+    ("editor-delete-forward", "delete-forward", "Delete the character after the cursor."),
+    ("editor-select-all", "select-all", "Select the entire buffer."),
+    ("editor-copy", "copy-selection", "Copy the current selection."),
+    ("editor-cut", "cut-selection", "Cut the current selection."),
+    ("editor-paste", "paste-clipboard", "Paste from the clipboard."),
+    ("editor-undo", "undo", "Undo the last editor change."),
+    ("editor-redo", "redo", "Redo the last undone editor change."),
+  ]:
+    nide.defineCommand(id, description, proc(
+        env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+        bodyNodes: seq[SyntaxNode],
+    ): Value {.closure, raises: [EvaluatorError].} =
+      discard env
+      discard layout
+      discard bodyNodes
+      if arguments.len != 0:
+        raise newException(EvaluatorError, id & " expects no arguments")
+      bridge.request("active-editor.command", [text(editorCommand)])
+      boolean(true)
+    )
+  nide.defineCommand("editor-newline", "Insert a newline.", proc(
+      env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+      bodyNodes: seq[SyntaxNode],
+  ): Value {.raises: [EvaluatorError].} =
+    discard env
+    discard layout
+    discard bodyNodes
+    if arguments.len != 0:
+      raise newException(EvaluatorError, "editor-newline expects no arguments")
+    bridge.request("active-editor.command", [text("insert"), text("\n")])
+    boolean(true)
+  )
   nide.defineBridgeRequest("open-project", "project.open", bridge, [1])
   nide.defineBridgeRequest("pick-project-directory", "project.pick-directory",
       bridge, [0])

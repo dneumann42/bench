@@ -1,27 +1,25 @@
 import "editor-input.owl"
 
 use nide:
-  include close-floating open-floating-panel toggle-floating
-
-fun nide-find-file:
-  open-floating-panel "find-file"
-
-fun nide-find-buffer:
-  open-floating-panel "find-buffer"
-
-fun nide-toggle-floating:
-  toggle-floating
-
-fun nide-close-floating:
-  close-floating
+  include command-palette find-buffer find-file toggle-floating
 
 fun nide-global-keybindings:
   keymap:
     ctrl "x" noop:
-      key "f" nide-find-file
-      key "b" nide-find-buffer
-      key "x" nide-toggle-floating
+      key "f" find-file
+      key "b" find-buffer
+      key "x" toggle-floating
       ctrl "g" cancel-key-sequence
+    key-combo "p" true false true false command-palette
+
+fun current-command-keybindings commandID:
+  define:
+    driver = (configured-editor-input-driver)
+  join-text
+    (concat-lists
+      (command-keybinding-labels-in (nide-global-keybindings) commandID "")
+      (command-keybinding-labels-in driver.bindings commandID ""))
+    ", "
 
 widget nide-keybindings:
   events:

@@ -1,0 +1,116 @@
+import "finder-panel.owl"
+import "keybindings.owl"
+
+use nide:
+  include close-floating get-floating-activation-generation keyPressed
+
+state "command-palette-panel":
+  queryID = (id "command-palette" "query")
+  resultsID = (id "command-palette" "results")
+  selectedID = ""
+  lastActivation = -1
+  pendingFocus = false
+
+fun command-palette-item command:
+  define:
+    id = (command-id command)
+  {}:
+    id = id
+    description = (command-description command)
+    keybindings = (current-command-keybindings id)
+    command = command
+
+fun command-palette-items-in commands:
+  if (empty? commands):
+    ([])
+  else:
+    cons
+      (command-palette-item (first commands))
+      (command-palette-items-in (rest commands))
+
+fun command-palette-items:
+  command-palette-items-in (interactive-commands)
+
+fun command-palette-current-rows:
+  command-palette-rows (command-palette-items) (editorText queryID) selectedID
+
+fun command-palette-current-id rows:
+  finder-current-key rows selectedID "id"
+
+fun selected-command-palette-row rows selected:
+  cond:
+    when (empty? rows):
+      nothing
+    when (= (first rows).id selected):
+      first rows
+    when true:
+      selected-command-palette-row (rest rows) selected
+
+fun command-palette-select-id commandID:
+  when (not (= commandID "")):
+    set selectedID commandID
+    finder-scroll-row "command-palette" resultsID commandID
+
+fun command-palette-previous:
+  define:
+    rows = (command-palette-current-rows)
+    currentID = (command-palette-current-id rows)
+  command-palette-select-id (finder-previous-key rows currentID "id")
+
+fun command-palette-next:
+  define:
+    rows = (command-palette-current-rows)
+    currentID = (command-palette-current-id rows)
+  command-palette-select-id (finder-next-key rows currentID "id")
+
+fun command-palette-reset:
+  set selectedID ""
+  setEditorText queryID ""
+
+fun command-palette-row-text item:
+  string item.id "    " item.keybindings "    " item.description
+
+fun command-palette-row item currentID:
+  define:
+    rowID = (id "command-palette" "row" item.id)
+  button rowID (command-palette-row-text item):
+    width = fill
+    height = fixed 28
+    fontName = "editor"
+    buttonPadding = (insets 6 2 6 2)
+    buttonBorderStyle = ButtonBorderNone
+    buttonChromeStyle = ButtonChromeFlat
+    buttonTextAlign = JustifyStart
+    background = (pick (= item.id currentID) (color 43 83 106) (color 0 0 0 0))
+    textScroll = true
+  tooltip rowID (command-palette-row-text item)
+
+widget command-palette-panel:
+  define:
+    activation = (get-floating-activation-generation)
+    rows = (command-palette-current-rows)
+    currentID = (command-palette-current-id rows)
+    current = (selected-command-palette-row rows currentID)
+
+  events:
+    when (not (= lastActivation activation)):
+      command-palette-reset
+      set lastActivation activation
+      set pendingFocus true
+    when pendingFocus:
+      when (not (keyboardInput?)):
+        finder-focus-query queryID
+        set pendingFocus false
+    finder-list-keybindings "command-palette-list" (value-of command-palette-previous) (value-of command-palette-next)
+    when (and (keyPressed "enter") (not (= currentID "")) (not (= current nothing))):
+      call current.command
+      command-palette-reset
+      close-floating
+    for item (iter rows):
+      when (clicked (id "command-palette" "row" item.id)):
+        command-palette-select-id item.id
+
+  finder-panel "command-palette" queryID:
+    finder-results resultsID rows "No commands":
+      for item (iter rows):
+        command-palette-row item currentID

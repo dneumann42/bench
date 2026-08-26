@@ -1,11 +1,13 @@
 use nide:
-  include add-project auto-track-opened-projects directory-files dir-exists? file-exists? get-projects open-build-launch-tab open-check-launch-tab open-floating-panel open-project open-run-launch-tab path-base-name path-join path-normalize path-parent path-stem pick-project-directory request-action save-projects set-nide-status set-process-launch-tab set-status string text-contains toggle-panel version
-
-fun file-new:
-  request-action "new-file"
-
-fun file-open:
-  request-action "open-file-dialog"
+  include add-project auto-track-opened-projects buffer-open command-palette
+    directory-files dir-exists? file-exists? file-new file-open file-save
+    file-save-as find-buffer find-file get-projects open-build-launch-tab
+    open-check-launch-tab open-project open-run-launch-tab pane-split-column
+    pane-split-row pane-unsplit path-base-name path-join path-normalize
+    path-parent path-stem project-build project-open project-run
+    project-settings save-projects set-nide-status set-process-launch-tab
+    set-status string text-contains toggle-file-explorer-panel
+    toggle-projects-panel version
 
 fun nide-get key:
   dict-get nide-state key
@@ -27,39 +29,6 @@ fun get-active-buffer-path:
 
 fun get-active-buffer-text:
   nide-get "active-buffer-text"
-
-fun buffer-open:
-  open-floating-panel "find-buffer"
-
-fun find-file:
-  open-floating-panel "find-file"
-
-fun find-buffer:
-  open-floating-panel "find-buffer"
-
-fun file-save:
-  define:
-    path = get-active-buffer-path
-    content = get-active-buffer-text
-  if (= path ""):
-    request-action "save-file-as-dialog"
-  else:
-    with (open-file path "wb") stream:
-      write stream content
-    request-action "mark-buffer-saved"
-    set-status (string "Saved " path)
-
-fun file-save-as:
-  request-action "save-file-as-dialog"
-
-fun pane-split-column:
-  request-action "pane.split-column"
-
-fun pane-split-row:
-  request-action "pane.split-row"
-
-fun pane-unsplit:
-  request-action "pane.unsplit"
 
 fun project-for-path projects path:
   define:
@@ -129,24 +98,3 @@ fun project-open-path path:
     set-nide-status (string "No Nimble project found at " path)
   else:
     open-tracked-or-new-project projectDir
-
-fun project-open:
-  pick-project-directory
-
-fun project-run:
-  set-status "Run project is not implemented"
-
-fun project-build:
-  set-status "Build project is not implemented"
-
-fun project-settings:
-  set-status "Project settings are not implemented"
-
-fun toggle-projects-panel:
-  toggle-panel "projects"
-
-fun toggle-file-explorer-panel:
-  toggle-panel "files"
-
-fun toggle-panel-by-id panelID:
-  toggle-panel panelID

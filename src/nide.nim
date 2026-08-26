@@ -251,6 +251,9 @@ proc init(T: typedesc[Nide]): T =
     NidePanel(id: "files", title: "Files", dock: PanelLeft,
       source: "file-explorer-panel.owl", widget: "file-explorer-panel",
       open: false, size: 320),
+    NidePanel(id: "command-palette", title: "Command Palette",
+      dock: PanelFloating, source: "command-palette-panel.owl",
+      widget: "command-palette-panel", open: false, size: 840),
     NidePanel(id: "find-file", title: "Find File", dock: PanelFloating,
       source: "find-file-panel.owl", widget: "find-file-panel",
       open: false, size: 720),
@@ -815,7 +818,10 @@ proc runCommand(model: var Nide, commandID: string) =
   if commandID.len == 0:
     return
   try:
-    model.runNideSource(commandID & "\n", commandID)
+    discard model.evaluator.env.invokeCommand(commandID)
+    model.syncCommandBindings()
+    model.processBridgeRequests()
+    model.processCommandBindings()
   except OwlError as error:
     model.status = "Command failed: " & error.msg
 
@@ -1800,10 +1806,8 @@ proc configureBridge(model: var Nide) =
 proc processPendingFileAction(model: var Nide) =
   if pickedProjectPath.len > 0:
     try:
-      discard model.evaluator.env.call(
-        model.evaluator.env.get("project-open-path").command,
-        @[stringLiteral(pickedProjectPath)],
-      )
+      discard model.evaluator.env.invokeCommand("project-open-path",
+          [text(pickedProjectPath)])
       model.syncCommandBindings()
       model.processBridgeRequests()
       model.processCommandBindings()
@@ -1861,8 +1865,13 @@ proc consumeRuntimeError(model: var Nide, context: string): bool =
     if details.message.len == 0:
       details.message = model.uiRuntime.runtimeErrorSummary()
     details.message = context & " failed: " & details.message
-    model.owlErrorApp.launchOwlErrorDialog(details)
-    model.status = context & " failed; see Owl error dialog"
+    model.owlErrorApp.lastErrorDetails = details
+    model.owlErrorApp.lastError = details.errorReport()
+    if model.owlErrorApp.launchOwlErrorDialog(details):
+      model.status = context & " failed; see Owl error dialog"
+    else:
+      model.status = context & " failed; " &
+          model.owlErrorApp.errorDialogLaunchError
     model.uiRuntime.clearRuntimeError()
     return true
   false
@@ -1901,10 +1910,16 @@ proc renderBufferViewer(ui: var UI, model: var Nide, paneID: PaneID,
   except CatchableError as error:
     renderFailed = true
     model.status = "Viewer " & viewer & " failed; see Owl error dialog"
-    model.owlErrorApp.launchOwlErrorDialog(ErrorDetails(
+    let details = ErrorDetails(
       message: "Viewer " & viewer & " failed: " & error.msg,
       primary: ErrorLocation(path: script.path),
-    ))
+    )
+    model.owlErrorApp.lastErrorDetails = details
+    model.owlErrorApp.lastError = details.errorReport()
+    let launched = model.owlErrorApp.launchOwlErrorDialog(details)
+    if not launched:
+      model.status = "Viewer " & viewer & " failed; " &
+          model.owlErrorApp.errorDialogLaunchError
   finally:
     model.pendingEditorFocus = model.viewerContext.pendingEditorFocus
   if renderFailed:
@@ -2283,6 +2298,8 @@ widget nideApplication(model: var Nide):
       ui.renderProcessCards(model)
 
   ui.renderFloatingDock(model)
+  if model.owlErrorApp.lastError.len > 0:
+    model.owlErrorApp.runtime.renderErrorDialog(ui, model.owlErrorApp.lastError)
   ui.flushModelRedraw(model)
 
 proc start =

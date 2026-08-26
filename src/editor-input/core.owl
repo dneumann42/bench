@@ -10,6 +10,7 @@ record KeyBinding:
   alt = false
   shift = false
   gui = false
+  commandID = ""
   command = (value-of noop)
   children = ([])
 
@@ -28,6 +29,7 @@ fun binding-children body:
 block-command key keyName command:
   KeyBinding:
     key = (eval keyName)
+    commandID = (command-id (eval command))
     command = (eval command)
     children = (binding-children block)
 
@@ -35,6 +37,7 @@ block-command ctrl keyName command:
   KeyBinding:
     key = (eval keyName)
     ctrl = true
+    commandID = (command-id (eval command))
     command = (eval command)
     children = (binding-children block)
 
@@ -42,6 +45,7 @@ block-command alt keyName command:
   KeyBinding:
     key = (eval keyName)
     alt = true
+    commandID = (command-id (eval command))
     command = (eval command)
     children = (binding-children block)
 
@@ -49,6 +53,7 @@ block-command shift keyName command:
   KeyBinding:
     key = (eval keyName)
     shift = true
+    commandID = (command-id (eval command))
     command = (eval command)
     children = (binding-children block)
 
@@ -59,6 +64,7 @@ block-command key-combo keyName ctrlPressed altPressed shiftPressed guiPressed c
     alt = (eval altPressed)
     shift = (eval shiftPressed)
     gui = (eval guiPressed)
+    commandID = (command-id (eval command))
     command = (eval command)
     children = (binding-children block)
 
@@ -73,6 +79,57 @@ fun cancel-key-sequence:
   set pendingKeymap ([])
   set pendingKeymapOwner ""
 
+fun key-binding-stroke binding:
+  string
+    (pick binding.ctrl "Ctrl+" "")
+    (pick binding.alt "Alt+" "")
+    (pick binding.shift "Shift+" "")
+    (pick binding.gui "Meta+" "")
+    binding.key
+
+fun key-binding-chord prefix binding:
+  define:
+    stroke = (key-binding-stroke binding)
+  if (= prefix ""):
+    stroke
+  else:
+    string prefix " " stroke
+
+fun concat-lists left right:
+  if (empty? left):
+    right
+  else:
+    cons (first left) (concat-lists (rest left) right)
+
+fun command-keybinding-direct-matches binding commandID chord:
+  cond:
+    when (= binding.commandID commandID):
+      cons chord list
+    when true:
+      list
+
+fun command-keybinding-labels-in bindings commandID prefix:
+  if (empty? bindings):
+    ([])
+  else:
+    define:
+      binding = (first bindings)
+      chord = (key-binding-chord prefix binding)
+      directMatches = (command-keybinding-direct-matches binding commandID chord)
+      childMatches = (command-keybinding-labels-in binding.children commandID chord)
+    concat-lists
+      (concat-lists directMatches childMatches)
+      (command-keybinding-labels-in (rest bindings) commandID prefix)
+
+fun join-text values separator:
+  cond:
+    when (empty? values):
+      ""
+    when (empty? (rest values)):
+      first values
+    when true:
+      string (first values) separator (join-text (rest values) separator)
+
 fun active-keymap owner bindings:
   if (empty? pendingKeymap):
     bindings
@@ -86,9 +143,11 @@ fun set-active-editor-driver name:
   active-editor-command "set-input-driver" name
 
 fun set-editor-line-cursor:
+  "Use the line cursor in the active editor."
   active-editor-command "set-cursor-style" "line"
 
 fun set-editor-block-cursor:
+  "Use the block cursor in the active editor."
   active-editor-command "set-cursor-style" "block"
 
 fun active-editor-text-length:
