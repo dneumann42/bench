@@ -1,7 +1,14 @@
 use nide:
-  include active-editor-command get-active-editor-column get-active-editor-cursor get-active-editor-line get-active-editor-text-length get-active-editor-input-driver get-active-editor-cursor-style get-active-editor-has-selection get-active-editor-selection-start get-active-editor-selection-stop
+  include command-id-of defcommand editor-insert get-active-editor-input-driver
+    run-command set-active-editor-driver
 
-fun noop:
+; Keybindings name the command they invoke, so the palette can look up which
+; keys reach a given command. A binding may also carry a callable directly, for
+; panel-local behaviour that is not worth registering as a command; those have
+; no id and so show no key hint.
+
+defcommand noop:
+  "Do nothing."
   nothing
 
 record KeyBinding:
@@ -18,7 +25,7 @@ record EditorInputDriver:
   name = ""
   mode = ""
   bindings = ([])
-  textCommand = (value-of noop)
+  textCommand = ""
 
 fun binding-children body:
   if (= (length (statements body)) 0):
@@ -29,7 +36,7 @@ fun binding-children body:
 block-command key keyName command:
   KeyBinding:
     key = (eval keyName)
-    commandID = (command-id (eval command))
+    commandID = (command-id-of (eval command))
     command = (eval command)
     children = (binding-children block)
 
@@ -37,7 +44,7 @@ block-command ctrl keyName command:
   KeyBinding:
     key = (eval keyName)
     ctrl = true
-    commandID = (command-id (eval command))
+    commandID = (command-id-of (eval command))
     command = (eval command)
     children = (binding-children block)
 
@@ -45,7 +52,7 @@ block-command alt keyName command:
   KeyBinding:
     key = (eval keyName)
     alt = true
-    commandID = (command-id (eval command))
+    commandID = (command-id-of (eval command))
     command = (eval command)
     children = (binding-children block)
 
@@ -53,7 +60,7 @@ block-command shift keyName command:
   KeyBinding:
     key = (eval keyName)
     shift = true
-    commandID = (command-id (eval command))
+    commandID = (command-id-of (eval command))
     command = (eval command)
     children = (binding-children block)
 
@@ -64,7 +71,7 @@ block-command key-combo keyName ctrlPressed altPressed shiftPressed guiPressed c
     alt = (eval altPressed)
     shift = (eval shiftPressed)
     gui = (eval guiPressed)
-    commandID = (command-id (eval command))
+    commandID = (command-id-of (eval command))
     command = (eval command)
     children = (binding-children block)
 
@@ -75,60 +82,21 @@ state "nide-keymap-dispatch":
   pendingKeymap = ([])
   pendingKeymapOwner = ""
 
-fun cancel-key-sequence:
+defcommand cancel-key-sequence:
+  "Abandon a partially typed key sequence."
   set pendingKeymap ([])
   set pendingKeymapOwner ""
 
-fun key-binding-stroke binding:
-  string
-    (pick binding.ctrl "Ctrl+" "")
-    (pick binding.alt "Alt+" "")
-    (pick binding.shift "Shift+" "")
-    (pick binding.gui "Meta+" "")
-    binding.key
-
-fun key-binding-chord prefix binding:
+defcommand editor-insert-frame-text:
+  "Insert the text typed this frame into the active editor."
   define:
-    stroke = (key-binding-stroke binding)
-  if (= prefix ""):
-    stroke
+    input = textInput
+  if (= input ""):
+    nothing
   else:
-    string prefix " " stroke
+    editor-insert input
 
-fun concat-lists left right:
-  if (empty? left):
-    right
-  else:
-    cons (first left) (concat-lists (rest left) right)
-
-fun command-keybinding-direct-matches binding commandID chord:
-  cond:
-    when (= binding.commandID commandID):
-      cons chord list
-    when true:
-      list
-
-fun command-keybinding-labels-in bindings commandID prefix:
-  if (empty? bindings):
-    ([])
-  else:
-    define:
-      binding = (first bindings)
-      chord = (key-binding-chord prefix binding)
-      directMatches = (command-keybinding-direct-matches binding commandID chord)
-      childMatches = (command-keybinding-labels-in binding.children commandID chord)
-    concat-lists
-      (concat-lists directMatches childMatches)
-      (command-keybinding-labels-in (rest bindings) commandID prefix)
-
-fun join-text values separator:
-  cond:
-    when (empty? values):
-      ""
-    when (empty? (rest values)):
-      first values
-    when true:
-      string (first values) separator (join-text (rest values) separator)
+; --- dispatch ---------------------------------------------------------------
 
 fun active-keymap owner bindings:
   if (empty? pendingKeymap):
@@ -139,126 +107,14 @@ fun active-keymap owner bindings:
     else:
       ([])
 
-fun set-active-editor-driver name:
-  active-editor-command "set-input-driver" name
-
-fun set-editor-line-cursor:
-  "Use the line cursor in the active editor."
-  active-editor-command "set-cursor-style" "line"
-
-fun set-editor-block-cursor:
-  "Use the block cursor in the active editor."
-  active-editor-command "set-cursor-style" "block"
-
-fun active-editor-text-length:
-  get-active-editor-text-length
-
-fun editor-set-cursor cursor:
-  active-editor-command "set-cursor" cursor
-
-fun editor-set-selection start stop:
-  active-editor-command "set-selection" start stop
-
-fun editor-backward-char:
-  define:
-    cursor = get-active-editor-cursor
-  if (> cursor 0):
-    editor-set-cursor (- cursor 1)
-  else:
-    nothing
-
-fun editor-forward-char:
-  define:
-    cursor = get-active-editor-cursor
-  if (< cursor (active-editor-text-length)):
-    editor-set-cursor (+ cursor 1)
-  else:
-    nothing
-
-fun editor-previous-line:
-  active-editor-command "set-line-column" (- (get-active-editor-line) 1) (get-active-editor-column)
-
-fun editor-next-line:
-  active-editor-command "set-line-column" (+ (get-active-editor-line) 1) (get-active-editor-column)
-
-fun editor-line-start:
-  active-editor-command "set-line-column" (get-active-editor-line) 1
-
-fun editor-line-end:
-  active-editor-command "set-line-column" (get-active-editor-line) 100000000
-
-fun editor-buffer-start:
-  editor-set-cursor 0
-
-fun editor-buffer-end:
-  editor-set-cursor (active-editor-text-length)
-
-fun editor-forward-word:
-  active-editor-command "word-forward"
-
-fun editor-backward-word:
-  active-editor-command "word-backward"
-
-fun editor-delete-word-forward:
-  active-editor-command "delete-word-forward"
-
-fun editor-delete-word-backward:
-  active-editor-command "delete-word-backward"
-
-fun editor-insert text:
-  active-editor-command "insert" text
-
-fun editor-delete-backward:
-  active-editor-command "delete-backward"
-
-fun editor-delete-forward:
-  active-editor-command "delete-forward"
-
-fun editor-delete-selection:
-  active-editor-command "delete-selection"
-
-fun editor-kill-line-start:
-  active-editor-command "kill-line-start"
-
-fun editor-kill-line-end:
-  active-editor-command "kill-line-end"
-
-fun editor-select-all:
-  active-editor-command "select-all"
-
-fun editor-mark:
-  define:
-    cursor = get-active-editor-cursor
-  editor-set-selection cursor cursor
-
-fun editor-copy:
-  active-editor-command "copy-selection"
-
-fun editor-cut:
-  active-editor-command "cut-selection"
-
-fun editor-paste:
-  active-editor-command "paste-clipboard"
-
-fun editor-undo:
-  active-editor-command "undo"
-
-fun editor-redo:
-  active-editor-command "redo"
-
-fun editor-newline:
-  editor-insert "\n"
-
-fun editor-insert-frame-text:
-  define:
-    input = textInput
-  if (= input ""):
-    nothing
-  else:
-    editor-insert input
-
 fun key-binding-pressed binding:
   keyComboPressed binding.key binding.ctrl binding.alt binding.shift binding.gui
+
+fun run-binding binding:
+  if (= binding.commandID ""):
+    call binding.command
+  else:
+    run-command binding.commandID
 
 fun run-keybindings-in owner bindings:
   if (empty? bindings):
@@ -271,7 +127,7 @@ fun run-keybindings-in owner bindings:
         if (empty? binding.children):
           do:
             cancel-key-sequence
-            call binding.command
+            run-binding binding
         else:
           set pendingKeymap binding.children
           set pendingKeymapOwner owner
@@ -285,10 +141,16 @@ fun run-keybindings bindings:
 fun run-keybindings-owned owner bindings:
   run-keybindings-in owner (active-keymap owner bindings)
 
+fun run-driver-text-command driver:
+  if (= driver.textCommand ""):
+    nothing
+  else:
+    run-command driver.textCommand
+
 fun run-editor-input-driver driver:
   when (not (= (get-active-editor-input-driver) "owl")):
     set-active-editor-driver "owl"
   if (not (run-keybindings-owned "editor" driver.bindings)):
-    call driver.textCommand
+    run-driver-text-command driver
   else:
     nothing

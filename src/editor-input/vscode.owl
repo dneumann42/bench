@@ -4,20 +4,21 @@ fun vscode-editor-driver:
   EditorInputDriver:
     name = "vscode"
     mode = "insert"
-    textCommand = (value-of editor-insert-frame-text)
+    textCommand = "editor-insert-frame-text"
     bindings = keymap:
-      key "left" editor-backward-char
-      key "right" editor-forward-char
-      key "up" editor-previous-line
-      key "down" editor-next-line
-      key "home" editor-line-start
-      key "end" editor-line-end
-      key "backspace" editor-delete-backward
-      key "delete" editor-delete-forward
-      key "enter" editor-newline
-      ctrl "a" editor-select-all
-      ctrl "c" editor-copy
-      ctrl "x" editor-cut
-      ctrl "v" editor-paste
-      ctrl "z" editor-undo
-      ctrl "y" editor-redo
+      key "left" "editor-backward-char"
+      key "right" "editor-forward-char"
+      key "up" "editor-previous-line"
+      key "down" "editor-next-line"
+      key "home" "editor-line-start"
+      key "end" "editor-line-end"
+      key "backspace" "editor-delete-backward"
+      key "delete" "editor-delete-forward"
+      key "enter" "editor-newline"
+      ctrl "a" "editor-select-all"
+      ctrl "c" "editor-copy"
+      ctrl "x" "editor-cut"
+      ctrl "v" "editor-paste"
+      ctrl "z" "editor-undo"
+      ctrl "y" "editor-redo"
+      key-combo "p" true false true false "command-palette"

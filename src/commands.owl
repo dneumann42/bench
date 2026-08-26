@@ -1,24 +1,27 @@
 use nide:
   include add-project auto-track-opened-projects buffer-open command-palette
-    directory-files dir-exists? file-exists? file-new file-open file-save
-    file-save-as find-buffer find-file get-projects open-build-launch-tab
-    open-check-launch-tab open-project open-run-launch-tab pane-split-column
-    pane-split-row pane-unsplit path-base-name path-join path-normalize
-    path-parent path-stem project-build project-open project-run
-    project-settings save-projects set-nide-status set-process-launch-tab
-    set-status string text-contains toggle-file-explorer-panel
-    toggle-projects-panel version
+    defcommand directory-files dir-exists? file-exists? file-new file-open
+    file-save file-save-as find-buffer find-file get-projects
+    open-build-launch-tab open-check-launch-tab open-project
+    open-run-launch-tab pane-split-column pane-split-row pane-unsplit
+    path-base-name path-join path-normalize path-parent path-stem
+    project-build project-open project-run project-settings save-projects
+    set-nide-status set-process-launch-tab set-status string text-contains
+    toggle-file-explorer-panel toggle-projects-panel version
 
 fun nide-get key:
   dict-get nide-state key
 
-fun set-build-launch-tab open:
+defcommand set-build-launch-tab open:
+  "Set whether building opens the launch tab."
   set-process-launch-tab "build" open
 
-fun set-run-launch-tab open:
+defcommand set-run-launch-tab open:
+  "Set whether running opens the launch tab."
   set-process-launch-tab "run" open
 
-fun set-check-launch-tab open:
+defcommand set-check-launch-tab open:
+  "Set whether checking opens the launch tab."
   set-process-launch-tab "check" open
 
 fun get-buffers:
@@ -73,7 +76,8 @@ fun nimble-project-name projectDir:
   else:
     path-stem nimbleFile
 
-fun open-tracked-or-new-project projectDir:
+defcommand open-tracked-or-new-project projectDir:
+  "Open a project directory, tracking it first if it is not tracked yet."
   define:
     normalizedDir = (path-normalize projectDir)
     tracked = (project-for-path (get-projects) normalizedDir)
@@ -91,7 +95,8 @@ fun open-tracked-or-new-project projectDir:
     open-project tracked.name
     set-nide-status (string "Opened project " tracked.name)
 
-fun project-open-path path:
+defcommand project-open-path path:
+  "Open the Nimble project that contains a path."
   define:
     projectDir = (find-nimble-project-dir path)
   if (= projectDir ""):

@@ -818,7 +818,7 @@ proc runCommand(model: var Nide, commandID: string) =
   if commandID.len == 0:
     return
   try:
-    discard model.evaluator.env.invokeCommand(commandID)
+    discard model.evaluator.env.invoke(commandID)
     model.syncCommandBindings()
     model.processBridgeRequests()
     model.processCommandBindings()
@@ -1806,7 +1806,7 @@ proc configureBridge(model: var Nide) =
 proc processPendingFileAction(model: var Nide) =
   if pickedProjectPath.len > 0:
     try:
-      discard model.evaluator.env.invokeCommand("project-open-path",
+      discard model.evaluator.env.invoke("project-open-path",
           [text(pickedProjectPath)])
       model.syncCommandBindings()
       model.processBridgeRequests()

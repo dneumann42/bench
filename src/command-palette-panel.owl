@@ -2,7 +2,9 @@ import "finder-panel.owl"
 import "keybindings.owl"
 
 use nide:
-  include close-floating get-floating-activation-generation keyPressed
+  include close-floating command-keybinding-label command-palette-rows
+    get-floating-activation-generation interactive-commands keyPressed
+    run-command
 
 state "command-palette-panel":
   queryID = (id "command-palette" "query")
@@ -11,25 +13,19 @@ state "command-palette-panel":
   lastActivation = -1
   pendingFocus = false
 
-fun command-palette-item command:
-  define:
-    id = (command-id command)
+fun command-palette-item labels entry:
   {}:
-    id = id
-    description = (command-description command)
-    keybindings = (current-command-keybindings id)
-    command = command
-
-fun command-palette-items-in commands:
-  if (empty? commands):
-    ([])
-  else:
-    cons
-      (command-palette-item (first commands))
-      (command-palette-items-in (rest commands))
+    id = entry.id
+    description = entry.description
+    keybindings = (command-keybinding-label labels entry.id)
 
 fun command-palette-items:
-  command-palette-items-in (interactive-commands)
+  define:
+    labels = (all-command-keybindings)
+    output = []
+  for entry (iter (interactive-commands)):
+    append output (command-palette-item labels entry)
+  output
 
 fun command-palette-current-rows:
   command-palette-rows (command-palette-items) (editorText queryID) selectedID
@@ -38,13 +34,12 @@ fun command-palette-current-id rows:
   finder-current-key rows selectedID "id"
 
 fun selected-command-palette-row rows selected:
-  cond:
-    when (empty? rows):
-      nothing
-    when (= (first rows).id selected):
-      first rows
-    when true:
-      selected-command-palette-row (rest rows) selected
+  define:
+    found = nothing
+  for row (iter rows):
+    when (= row.id selected):
+      set found row
+  found
 
 fun command-palette-select-id commandID:
   when (not (= commandID "")):
@@ -103,7 +98,7 @@ widget command-palette-panel:
         set pendingFocus false
     finder-list-keybindings "command-palette-list" (value-of command-palette-previous) (value-of command-palette-next)
     when (and (keyPressed "enter") (not (= currentID "")) (not (= current nothing))):
-      call current.command
+      run-command currentID
       command-palette-reset
       close-floating
     for item (iter rows):
