@@ -1,13 +1,42 @@
+import std/strutils
+
+# This checkout lives on a shared partition that is mounted at a different
+# absolute path depending on which OS booted it, so nothing below may hardcode
+# one. Sibling checkouts are addressed relative to this file, and nimble
+# packages are looked up in the store of whichever user/OS is running.
+
+--path:"src"
 --path:"../nest/src"
 --path:"../owl/src"
---path:"/home/dneumann/.nimble/pkgs2/chroma-1.0.0-76a12834f1b7e211e4232c1e13960accba6bd477/src"
---path:"/home/dneumann/.nimble/pkgs2/sdl3-1.0-5ecbff9ffa24a0e532bb20bccd4ea4552a2f4093/src"
---path:"/home/dneumann/.nimble/pkgs2/micros-0.1.18-69d90af9f9cfd03cf1cf89fac8dd0674146e5d83"
---path:"/home/dneumann/.nimble/pkgs2/fungus-0.1.19-f34a2327c3f2d9082836d363096ab2f99040faa4"
---path:"/home/dneumann/.nimble/pkgs2/kiwiberry-0.5.0-23a3b4115fe376c314e62dc4c9baef8dc09f7287"
 
-# nest requires the sdl3 backend define (mirrors ~/nest/config.nims)
+proc nimbleStore(): string =
+  result = getEnv("NIMBLE_DIR")
+  if result.len == 0:
+    result = getEnv("HOME") & "/.nimble"
+  result = result & "/pkgs2"
+
+proc addPkg(name: string) =
+  ## Put the newest install of `name` on the path. Stores disagree on layout --
+  ## some packages keep their srcDir, others are flattened -- so pick whichever
+  ## this machine actually has.
+  let store = nimbleStore()
+  var newest = ""
+  for dir in listDirs(store):
+    let base = dir.strip(chars = {'/'}).rsplit('/', 1)[^1]
+    if base.startsWith(name & "-") and dir > newest:
+      newest = dir
+  if newest.len == 0:
+    echo "config.nims: nimble package '" & name & "' not found under " & store
+    return
+  switch("path", if dirExists(newest & "/src"): newest & "/src" else: newest)
+
+# Transitive dependencies of nest (see nest.nimble).
+for pkg in ["chroma", "sdl3", "micros", "fungus", "kiwiberry"]:
+  addPkg(pkg)
+
+# nest requires the sdl3 backend define (mirrors ../nest/config.nims)
 --d:sdl3
+
 # begin Nimble config (version 2)
 when withDir(thisDir(), system.fileExists("nimble.paths")):
   include "nimble.paths"
