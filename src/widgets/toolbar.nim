@@ -222,7 +222,7 @@ proc listField(value: Value, field, owner: string): seq[Value] {.raises: [
   let entry = value.entries.getOrDefault(field)
   if entry.kind != List:
     raise newException(EvaluatorError, owner & "." & field & " must be a list")
-  entry.items
+  entry.listSeq
 
 proc toolbarValue(kind: string, fields: openArray[(string, Value)]): Value =
   var entries = initTable[string, Value]()

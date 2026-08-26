@@ -301,8 +301,8 @@ proc write*(stream: Stream, pm: ProjectManager) =
 
 proc read*(stream: Stream, T: typedesc[ProjectManager]): T =
   let loaded = loadOwlSource(stream.readAll(), mode = restrictedOwlData)
-  if loaded.kind == List and loaded.items.len > 0:
-    result = fromOwl(loaded.items[0], T)
+  if loaded.kind == List and loaded.listLen > 0:
+    result = fromOwl(loaded.at(0), T)
   else:
     fromOwl(loaded, result)
   result.heal()
