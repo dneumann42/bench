@@ -2,9 +2,9 @@ import "finder-panel.owl"
 import "keybindings.owl"
 
 use nide:
-  include close-floating command-keybinding-label command-palette-rows
-    get-floating-activation-generation interactive-commands keyPressed
-    run-command
+  include close-floating command-generation command-keybinding-label
+    command-palette-rows get-floating-activation-generation
+    interactive-commands keyPressed list-window run-command
 
 state "command-palette-panel":
   queryID = (id "command-palette" "query")
@@ -27,8 +27,21 @@ fun command-palette-items:
     append output (command-palette-item labels entry)
   output
 
+; The rows are asked for several times a frame -- to build the list, to resolve
+; the selection, and again when navigating -- and only change when the query,
+; the selection or the set of commands does.
+state "command-palette-rows-cache":
+  rowsKey = ""
+  rowsCache = ([])
+
 fun command-palette-current-rows:
-  command-palette-rows (command-palette-items) (editorText queryID) selectedID
+  define:
+    query = (editorText queryID)
+    key = (string query "|" selectedID "|" (command-generation))
+  when (not (= key rowsKey)):
+    set rowsCache (command-palette-rows (command-palette-items) query selectedID)
+    set rowsKey key
+  rowsCache
 
 fun command-palette-current-id rows:
   finder-current-key rows selectedID "id"
@@ -41,10 +54,16 @@ fun selected-command-palette-row rows selected:
       set found row
   found
 
+; Button height plus the column gap, which is the pitch the window slices on.
+fun command-palette-row-height:
+  29
+
 fun command-palette-select-id commandID:
   when (not (= commandID "")):
     set selectedID commandID
-    finder-scroll-row "command-palette" resultsID commandID
+    finder-scroll-index resultsID
+      (finder-index-of (command-palette-current-rows) commandID "id")
+      (command-palette-row-height)
 
 fun command-palette-previous:
   define:
@@ -83,9 +102,11 @@ fun command-palette-row item currentID:
 widget command-palette-panel:
   define:
     activation = (get-floating-activation-generation)
-    rows = (command-palette-current-rows)
-    currentID = (command-palette-current-id rows)
-    current = (selected-command-palette-row rows currentID)
+    allRows = (command-palette-current-rows)
+    currentID = (command-palette-current-id allRows)
+    current = (selected-command-palette-row allRows currentID)
+    window = (list-window allRows (scrollY resultsID) (widgetHeight resultsID) (command-palette-row-height) 6)
+    rows = (dict-get window "rows")
 
   events:
     when (not (= lastActivation activation)):
@@ -106,6 +127,12 @@ widget command-palette-panel:
         command-palette-select-id item.id
 
   finder-panel "command-palette" queryID:
-    finder-results resultsID rows "No commands":
+    finder-results resultsID allRows "No commands":
+      spacer (id "command-palette" "rows-before"):
+        width = fill
+        height = fixed (dict-get window "before")
       for item (iter rows):
         command-palette-row item currentID
+      spacer (id "command-palette" "rows-after"):
+        width = fill
+        height = fixed (dict-get window "after")

@@ -148,8 +148,8 @@ fun palette-row-for wanted rows:
   test "ranking a query keeps matching rows and marks one selected":
     let rows = runtime.evaluate("""command-palette-rows (palette-items) "find" "" """)
     check rows.kind == List
-    check rows.items.len > 0
-    check rows.items.len < 20
+    check rows.listLen > 0
+    check rows.listLen < 20
     var selected = 0
     for row in rows.items:
       if row.entries["selected"].boolean:

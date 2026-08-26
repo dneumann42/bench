@@ -84,13 +84,17 @@ fun vi-bindings:
       ctrl "u" "editor-kill-line-start"
       ctrl "r" "editor-redo"
 
-fun vi-editor-driver:
+; Kept apart from the driver record so the record stays a pure value that can
+; be cached; this still runs on every key event.
+fun vi-sync-cursor:
   when (= viMode "normal"):
     when (not (= (get-active-editor-cursor-style) "block")):
       set-editor-block-cursor
   when (= viMode "insert"):
     when (not (= (get-active-editor-cursor-style) "line")):
       set-editor-line-cursor
+
+fun vi-editor-driver:
   EditorInputDriver:
     name = "vi"
     mode = viMode

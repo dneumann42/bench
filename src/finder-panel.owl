@@ -58,6 +58,35 @@ fun finder-previous-key rows selected keyName:
 fun finder-scroll-row panelKey resultsID rowKey:
   scrollIntoView resultsID (id panelKey "row" rowKey) 6
 
+; Index of the row whose `keyName` is `wanted`, or -1. Used to scroll to a row
+; that may not be rendered, which is the case once a list is windowed.
+fun finder-index-of rows wanted keyName:
+  define:
+    found = -1
+    at = 0
+  for row (iter rows):
+    when (= (dict-get row keyName) wanted):
+      set found at
+    += at 1
+  found
+
+; Scroll a windowed list so the row at `index` is on screen. Works without the
+; row existing as a widget, unlike scrollIntoView.
+fun finder-scroll-index resultsID index rowHeight:
+  when (>= index 0):
+    define:
+      top = (* index rowHeight)
+      bottom = (+ top rowHeight)
+      viewTop = (scrollY resultsID)
+      viewBottom = (+ viewTop (widgetHeight resultsID))
+    cond:
+      when (< top viewTop):
+        scrollByY resultsID (- top viewTop)
+      when (> bottom viewBottom):
+        scrollByY resultsID (- bottom viewBottom)
+      when true:
+        nothing
+
 fun finder-list-keybindings owner previousCommand nextCommand:
   run-keybindings-owned owner (dialog-list-keybindings previousCommand nextCommand)
 

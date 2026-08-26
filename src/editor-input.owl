@@ -6,7 +6,11 @@ import "editor-input/vi.owl"
 state "nide-editor-input-config":
   editorInputDriver = "emacs"
 
-fun configured-editor-input-driver:
+; Identifies the keymap currently in force, without building it.
+fun editor-input-driver-key:
+  string editorInputDriver ":" viMode
+
+fun build-editor-input-driver:
   cond:
     when (= editorInputDriver "vscode"):
       vscode-editor-driver
@@ -15,5 +19,21 @@ fun configured-editor-input-driver:
     when true:
       emacs-editor-driver
 
+; A driver's keymap is constant for a given driver and mode, and rebuilding all
+; of it on every key event was the single largest cost of pressing a key.
+state "nide-editor-input-driver":
+  driverKey = ""
+  driverCache = nothing
+
+fun configured-editor-input-driver:
+  define:
+    key = (editor-input-driver-key)
+  when (not (= key driverKey)):
+    set driverCache (build-editor-input-driver)
+    set driverKey key
+  driverCache
+
 fun run-configured-editor-input-driver:
+  when (= editorInputDriver "vi"):
+    vi-sync-cursor
   run-editor-input-driver (configured-editor-input-driver)

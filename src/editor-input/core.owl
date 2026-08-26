@@ -116,14 +116,14 @@ fun run-binding binding:
   else:
     run-command binding.commandID
 
+; Walked with an iterator rather than by recursing on `rest`. The first match
+; still wins: once handled, no further binding is tested.
 fun run-keybindings-in owner bindings:
-  if (empty? bindings):
-    false
-  else:
-    define:
-      binding = (first bindings)
-    if (key-binding-pressed binding):
-      do:
+  define:
+    handled = false
+  for binding (iter bindings):
+    when (not handled):
+      when (key-binding-pressed binding):
         if (empty? binding.children):
           do:
             cancel-key-sequence
@@ -131,9 +131,8 @@ fun run-keybindings-in owner bindings:
         else:
           set pendingKeymap binding.children
           set pendingKeymapOwner owner
-        true
-    else:
-      run-keybindings-in owner (rest bindings)
+        set handled true
+  handled
 
 fun run-keybindings bindings:
   run-keybindings-owned "default" bindings

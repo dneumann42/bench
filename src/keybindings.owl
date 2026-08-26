@@ -3,7 +3,7 @@ import "editor-input.owl"
 use nide:
   include command-keybinding-label keybinding-labels
 
-fun nide-global-keybindings:
+fun build-nide-global-keybindings:
   keymap:
     ctrl "x" "noop":
       key "f" "find-file"
@@ -12,10 +12,33 @@ fun nide-global-keybindings:
       ctrl "g" "cancel-key-sequence"
     key-combo "p" true false true false "command-palette"
 
+; The global keymap never varies, so it is built once rather than on every key
+; press.
+state "nide-global-keymap":
+  globalKeymapReady = false
+  globalKeymap = ([])
+
+fun nide-global-keybindings:
+  when (not globalKeymapReady):
+    set globalKeymap (build-nide-global-keybindings)
+    set globalKeymapReady true
+  globalKeymap
+
+; The keymaps are constant for a given driver and mode, so the labels derived
+; from them are rebuilt only when that changes rather than every frame.
+state "nide-keybinding-labels":
+  labelKey = ""
+  labelMap = (dict)
+
 fun all-command-keybindings:
   define:
-    driver = (configured-editor-input-driver)
-  keybinding-labels (nide-global-keybindings) driver.bindings
+    key = (editor-input-driver-key)
+  when (not (= key labelKey)):
+    define:
+      driver = (configured-editor-input-driver)
+    set labelMap (keybinding-labels (nide-global-keybindings) driver.bindings)
+    set labelKey key
+  labelMap
 
 fun current-command-keybindings commandID:
   command-keybinding-label (all-command-keybindings) commandID

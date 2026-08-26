@@ -19,6 +19,11 @@ const
   ActionToggleFileExplorerPanel* = "toggle-file-explorer-panel"
   MaxFinderRows = 400
   MaxPreviewBytes = 200_000
+  ## The file finder walks the project tree on the UI thread, so the walk is
+  ## bounded rather than trusted to finish. Without a project open the root
+  ## falls back to the home directory, which is effectively unbounded.
+  MaxFinderScanEntries = 40_000
+  MaxFinderScanDepth = 32
 
   VarState* = "nide-state"
   VarRequestedActions* = "nide-requested-actions"
@@ -239,8 +244,7 @@ proc requestAction(env: Environment, action: string) {.raises: [EvaluatorError].
       list(@[])
   if actions.kind != List:
     raise newException(EvaluatorError, VarRequestedActions & " must be a list")
-  actions.items.add text(action)
-  env.set(VarRequestedActions, actions)
+  env.set(VarRequestedActions, actions.listAppended(text(action)))
 
 # ---------------------------------------------------------------------------
 # Command families
@@ -593,20 +597,34 @@ proc fuzzyScore(haystack, needle: string): int =
 proc matchesFuzzy(haystack, query: string): bool =
   query.len == 0 or fuzzyScore(haystack, query) > low(int) div 8
 
+type FileScan = object
+  budget: int ## directory entries left to visit
+  truncated: bool ## whether the walk gave up before seeing everything
+
 proc collectProjectFiles(
     root, baseRoot, query: string,
     ignoredDirs: HashSet[string],
     rows: var seq[tuple[score: int, path, name, relative: string]],
+    scan: var FileScan,
+    depth = 0,
 ) =
+  if scan.budget <= 0 or depth > MaxFinderScanDepth:
+    scan.truncated = true
+    return
   try:
     for kind, path in walkDir(root, relative = false):
+      if scan.budget <= 0:
+        scan.truncated = true
+        return
+      dec scan.budget
       let name = path.extractFilename
       if name.len == 0:
         continue
       if kind == pcDir:
         if name in ignoredDirs:
           continue
-        collectProjectFiles(path, baseRoot, query, ignoredDirs, rows)
+        collectProjectFiles(path, baseRoot, query, ignoredDirs, rows, scan,
+            depth + 1)
       elif kind == pcFile:
         var rel = path
         try:
@@ -955,6 +973,7 @@ var
   previewCacheMtime: Time
   previewCacheSize: BiggestInt = -1
   previewCacheText = ""
+  finderCacheTruncated = false
 
 proc fileIconModeCommand(
     env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
@@ -1002,6 +1021,52 @@ proc textListToggleCommand(
   if not removed:
     output.add target
   textList(output)
+
+proc rowWindow(total: int, scrollY, viewportHeight: float64,
+    rowHeight, overscan: int): tuple[first, stop, before, after: int] {.raises: [].} =
+  ## The slice of a uniform-height row list a scrolled viewport shows, plus the
+  ## pixel padding standing in for the rows above and below it.
+  let
+    height = max(rowHeight, 1)
+    margin = max(overscan, 0)
+  result.first = clamp(
+    floor(scrollY / height.float64).int - margin, 0, max(total, 0))
+  let count = max(ceil(viewportHeight / height.float64).int + margin * 2, 1)
+  result.stop = clamp(result.first + count, result.first, max(total, 0))
+  result.before = result.first * height
+  result.after = (max(total, 0) - result.stop) * height
+
+proc listWindowCommand(
+    env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+    bodyNodes: seq[SyntaxNode],
+): Value {.nideCommand: "list-window", raises: [EvaluatorError].} =
+  ## The slice of a list a scrolled viewport shows, as rows, before, after and
+  ## total. Any panel whose rows are a uniform height can render just this
+  ## slice between two spacers instead of every row.
+  discard layout
+  discard bodyNodes
+  if arguments.len != 5:
+    raise newException(EvaluatorError,
+        "list-window expects rows, scroll-y, viewport-height, row-height, and overscan")
+  let rows = env.eval(arguments[0])
+  if rows.kind != List:
+    raise newException(EvaluatorError, "list-window expects a list of rows")
+  let window = rowWindow(
+    rows.listLen,
+    env.evalNumberArgument(arguments, 1, "list-window"),
+    env.evalNumberArgument(arguments, 2, "list-window"),
+    env.evalNumberArgument(arguments, 3, "list-window").int,
+    env.evalNumberArgument(arguments, 4, "list-window").int,
+  )
+  var visible: seq[Value]
+  for index in window.first ..< window.stop:
+    visible.add rows.at(index)
+  dictionaryValue([
+    ("rows", list(visible)),
+    ("before", number(window.before.float64)),
+    ("after", number(window.after.float64)),
+    ("total", number(rows.listLen.float64)),
+  ])
 
 proc fileTreeVisibleCommand(
     env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
@@ -1053,18 +1118,15 @@ proc fileTreeWindowCommand(
     showFiles = filterMode != "directories"
     allRows = fileTreeRows(root, expandedList, selectedPath, query, sortMode,
         showHidden, showDirs, showFiles)
-    total = allRows.len
-    first = max(floor(scrollY / rowHeight.float64).int - overscan, 0)
-    count = max(ceil(viewportHeight / rowHeight.float64).int + overscan * 2, 1)
-    stop = min(first + count, total)
+    window = rowWindow(allRows.len, scrollY, viewportHeight, rowHeight, overscan)
   var rows: seq[Value]
-  for index in first ..< stop:
+  for index in window.first ..< window.stop:
     rows.add allRows[index]
   dictionaryValue([
     ("rows", list(rows)),
-    ("before", number((first * rowHeight).float64)),
-    ("after", number(((total - stop) * rowHeight).float64)),
-    ("total", number(total.float64)),
+    ("before", number(window.before.float64)),
+    ("after", number(window.after.float64)),
+    ("total", number(allRows.len.float64)),
   ])
 
 proc fileExplorerEventCommand(
@@ -1122,7 +1184,9 @@ proc projectFilesWindowCommand(
     for item in ignored:
       if item.len > 0:
         ignoredSet.incl item
-    collectProjectFiles(root, root, query, ignoredSet, finderCacheRows)
+    var scan = FileScan(budget: MaxFinderScanEntries)
+    collectProjectFiles(root, root, query, ignoredSet, finderCacheRows, scan)
+    finderCacheTruncated = scan.truncated
     finderCacheRows.sort(proc(a, b: tuple[score: int, path, name,
         relative: string]): int =
       result = cmp(b.score, a.score)
@@ -1143,6 +1207,18 @@ proc projectFilesWindowCommand(
       ("selected", boolean(selected)),
     ])
   list(rows)
+
+proc projectFilesTruncatedCommand(
+    env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+    bodyNodes: seq[SyntaxNode],
+): Value {.nideCommand: "project-files-truncated?", raises: [EvaluatorError].} =
+  ## Whether the last project file scan gave up before seeing the whole tree.
+  ## The scan is bounded so a huge root cannot wedge a frame.
+  discard env
+  discard layout
+  discard bodyNodes
+  expectNoArguments("project-files-truncated?", arguments)
+  boolean(finderCacheTruncated)
 
 proc filePreviewTextCommand(
     env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
@@ -1244,6 +1320,18 @@ proc commandKeybindingLabelCommand(
         "command-keybinding-label expects a label map")
   let label = labels.entries.getOrDefault(id)
   if label.kind == Text: label else: text("")
+
+proc commandGenerationCommand(
+    env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+    bodyNodes: seq[SyntaxNode],
+): Value {.nideCommand: "command-generation", raises: [EvaluatorError].} =
+  ## A number that changes whenever a command is defined or redefined. Include
+  ## it in a cache key to notice a script adding commands.
+  discard env
+  discard layout
+  discard bodyNodes
+  expectNoArguments("command-generation", arguments)
+  number(commandGeneration().float64)
 
 proc commandIdOfCommand(
     env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
