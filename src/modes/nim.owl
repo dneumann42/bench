@@ -13,7 +13,7 @@ define:
 
 defcommand nim-enable-highlighting:
   "Turn on Nim syntax highlighting in the active buffer."
-  tags "mode" "nim"
+  tags "mode" "nim" "hidden"
   define:
     nimRules = []:
       span "#[" "]#" nimCommentColor
@@ -31,7 +31,7 @@ defcommand nim-enable-highlighting:
 
 defcommand nim-disable-highlighting:
   "Turn off Nim syntax highlighting in the active buffer."
-  tags "mode" "nim"
+  tags "mode" "nim" "hidden"
   clear-editor-syntax
 
 set-mode-hook "onload" "nim-enable-highlighting"

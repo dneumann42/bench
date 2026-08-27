@@ -5,7 +5,8 @@
 ## has to hand the collected set to Owl. See `registry.nim` for what a command
 ## is and how Owl defines its own.
 
-import std/[algorithm, math, os, sets, streams, strutils, tables, sugar, times]
+import std/[algorithm, math, os, sets, streams, strutils, tables, sugar,
+  times, unicode]
 import owl
 import registry
 export registry
@@ -719,6 +720,34 @@ proc stringCommand(
     else:
       output.add $value
   text(output)
+
+proc textColumnCommand(
+    env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
+    bodyNodes: seq[SyntaxNode],
+): Value {.nideCommand: "text-column", raises: [EvaluatorError].} =
+  ## Fit text to a column of so many characters: truncated with an ellipsis
+  ## when it is too long, and padded with spaces when it is short unless a
+  ## third argument says not to. Lines columns up in a monospaced font.
+  discard layout
+  discard bodyNodes
+  if arguments.len notin {2, 3}:
+    raise newException(EvaluatorError,
+        "text-column expects text, a width, and an optional pad flag")
+  let
+    source = env.evalTextArgument(arguments, 0, "text-column")
+    width = env.evalNumberArgument(arguments, 1, "text-column").int
+    pad =
+      if arguments.len == 3: env.eval(arguments[2]).isTruthy
+      else: true
+  if width <= 0:
+    return text("")
+  let runes = source.toRunes
+  if runes.len > width:
+    return text(if width == 1: "…" else: $runes[0 ..< width - 1] & "…")
+  if pad:
+    text(source & spaces(width - runes.len))
+  else:
+    text(source)
 
 proc pathNormalizeCommand(
     env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,

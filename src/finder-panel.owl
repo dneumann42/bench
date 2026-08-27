@@ -112,13 +112,16 @@ block-command finder-panel panelKey queryID:
       alignItems = AlignStretch
       eval block
 
-block-command finder-results resultsID rows emptyMessage:
+; The results column takes its width from the caller: a finder with a preview
+; beside it wants a fixed column, one without wants the whole panel.
+block-command finder-results resultsID rows emptyMessage resultsWidth:
   define:
     resultsWidget = (eval resultsID)
     rowItems = (eval rows)
     emptyText = (eval emptyMessage)
+    columnWidth = (eval resultsWidth)
   column resultsWidget:
-    width = fixed 340
+    width = columnWidth
     height = fill
     gap = 1
     scrollY = true

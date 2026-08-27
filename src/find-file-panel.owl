@@ -107,7 +107,7 @@ widget find-file-panel:
         find-file-select-path item.path
 
   finder-panel "find-file" queryID:
-    finder-results resultsID rows "No files":
+    finder-results resultsID rows "No files" (fixed 340):
       for item (iter rows):
         file-row item
     finder-preview previewID "find-preview"

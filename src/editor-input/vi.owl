@@ -41,6 +41,7 @@ defcommand vi-delete-char:
 
 defcommand vi-insert-text:
   "Insert this frame's typed text, but only in vi insert mode."
+  tags "hidden"
   if (= viMode "insert"):
     run-command "editor-insert-frame-text"
   else:

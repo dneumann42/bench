@@ -9,6 +9,7 @@ use nide:
 
 defcommand noop:
   "Do nothing."
+  tags "hidden"
   nothing
 
 record KeyBinding:
@@ -84,11 +85,13 @@ state "nide-keymap-dispatch":
 
 defcommand cancel-key-sequence:
   "Abandon a partially typed key sequence."
+  tags "hidden"
   set pendingKeymap ([])
   set pendingKeymapOwner ""
 
 defcommand editor-insert-frame-text:
   "Insert the text typed this frame into the active editor."
+  tags "hidden"
   define:
     input = textInput
   if (= input ""):

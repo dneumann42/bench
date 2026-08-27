@@ -207,7 +207,8 @@ proc defcommandCommand(
 ): Value {.nideCommand: "defcommand", raises: [EvaluatorError].} =
   ## Define a command in Owl, from a name, optional parameters, and a body
   ## whose first statement is the description string. A command that takes no
-  ## parameters is offered in the command palette.
+  ## parameters is offered in the command palette, unless it is tagged
+  ## `hidden`.
   discard layout
   if arguments.len == 0:
     raise newException(EvaluatorError, "defcommand expects a command name")
@@ -237,9 +238,10 @@ proc defcommandCommand(
       evaluatesArguments = true, acceptsBlock = false)
   env.define(id, command)
   # The palette invokes with no arguments, so only a command that needs none
-  # can be offered there.
+  # can be offered there -- and plumbing tagged `hidden` stays out of it.
   registerCommand(id, body[0].stringValue, command,
-      interactive = parameters.len == 0, OwlOrigin, tags)
+      interactive = parameters.len == 0 and "hidden" notin tags,
+      OwlOrigin, tags)
   command
 
 proc runCommandCommand(

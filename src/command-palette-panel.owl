@@ -4,7 +4,7 @@ import "keybindings.owl"
 use nide:
   include close-floating command-generation command-keybinding-label
     command-palette-rows get-floating-activation-generation
-    interactive-commands keyPressed list-window run-command
+    interactive-commands keyPressed list-window run-command text-column
 
 state "command-palette-panel":
   queryID = (id "command-palette" "query")
@@ -81,8 +81,22 @@ fun command-palette-reset:
   set selectedID ""
   setEditorText queryID ""
 
+; Columns are laid out by padding to fixed character widths, which lines them
+; up in the monospaced editor font. The description is truncated to fit; the
+; tooltip carries the whole thing.
 fun command-palette-row-text item:
-  string item.id "    " item.keybindings "    " item.description
+  string
+    (text-column item.id 34)
+    " "
+    (text-column item.keybindings 18)
+    " "
+    (text-column item.description 72 false)
+
+fun command-palette-row-tooltip item:
+  if (= item.keybindings ""):
+    string item.id " -- " item.description
+  else:
+    string item.id " (" item.keybindings ") -- " item.description
 
 fun command-palette-row item currentID:
   define:
@@ -97,7 +111,7 @@ fun command-palette-row item currentID:
     buttonTextAlign = JustifyStart
     background = (pick (= item.id currentID) (color 43 83 106) (color 0 0 0 0))
     textScroll = true
-  tooltip rowID (command-palette-row-text item)
+  tooltip rowID (command-palette-row-tooltip item)
 
 widget command-palette-panel:
   define:
@@ -127,7 +141,7 @@ widget command-palette-panel:
         command-palette-select-id item.id
 
   finder-panel "command-palette" queryID:
-    finder-results resultsID allRows "No commands":
+    finder-results resultsID allRows "No commands" fill:
       spacer (id "command-palette" "rows-before"):
         width = fill
         height = fixed (dict-get window "before")

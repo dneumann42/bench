@@ -12,7 +12,7 @@ define:
 
 defcommand owl-enable-highlighting:
   "Turn on Owl syntax highlighting in the active buffer."
-  tags "mode" "owl"
+  tags "mode" "owl" "hidden"
   define:
     owlRules = []:
       starts-with ";" owlCommentColor
@@ -26,7 +26,7 @@ defcommand owl-enable-highlighting:
 
 defcommand owl-disable-highlighting:
   "Turn off Owl syntax highlighting in the active buffer."
-  tags "mode" "owl"
+  tags "mode" "owl" "hidden"
   clear-editor-syntax
 
 set-mode-hook "onload" "owl-enable-highlighting"

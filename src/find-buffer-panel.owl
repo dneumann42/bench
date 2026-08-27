@@ -123,7 +123,7 @@ widget find-buffer-panel:
           set selectedID ""
 
   finder-panel "find-buffer" queryID:
-    finder-results resultsID rows "No buffers":
+    finder-results resultsID rows "No buffers" (fixed 340):
       for item (iter rows):
         buffer-row item currentID
     finder-preview previewID "buffer-preview"

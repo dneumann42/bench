@@ -199,6 +199,29 @@ defcommand tag-then-body:
     check "mode" in commandTags("nim-enable-highlighting")
     check "nim" in commandTags("nim-enable-highlighting")
 
+  test "a hidden tag keeps a command out of the palette":
+    discard evaluator.exec(parse("""
+use nide:
+  include defcommand
+
+defcommand shows-up:
+  "Offered to a person."
+  nothing
+
+defcommand stays-out:
+  "Plumbing nobody picks by name."
+  tags "hidden"
+  nothing
+""", "<test>"))
+    var listed: seq[string]
+    for command in commands():
+      if command.interactive:
+        listed.add command.id
+    check "shows-up" in listed
+    check "stays-out" notin listed
+    # still a command, just not palette clutter
+    check hasCommand("stays-out")
+
   test "a plain fun is not reachable by id":
     # An Owl `fun` is a private callable, not a Nide command. Anything meant to
     # be invoked by name declares itself with `defcommand`.
@@ -285,3 +308,29 @@ suite "mode scripts are found, not listed":
         check modeSource("nim").path == path
       finally:
         removeFile(path)
+
+
+suite "text columns":
+  setup:
+    var evaluator = Evaluator.init()
+    let bridge = NideOwlBridge.init()
+    evaluator.registerInternalCommands(bridge)
+
+  proc column(evaluator: var Evaluator, source: string): string =
+    evaluator.exec(parse("""
+use nide:
+  include text-column
+
+""" & source, "<test>")).text
+
+  test "short text is padded to the column width":
+    check evaluator.column("""text-column "ab" 5""") == "ab   "
+
+  test "long text is truncated with an ellipsis":
+    check evaluator.column("""text-column "abcdefgh" 5""") == "abcd…"
+
+  test "padding can be turned off for a trailing column":
+    check evaluator.column("""text-column "ab" 5 false""") == "ab"
+
+  test "a zero width column is empty":
+    check evaluator.column("""text-column "abc" 0""") == ""
