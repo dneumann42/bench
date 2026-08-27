@@ -1,9 +1,10 @@
-import std/[monotimes, os, strutils, unittest]
+import std/[monotimes, os, strutils, tables, unittest]
 from std/times import inNanoseconds
 
 import owl
 import ../src/commands
 import ../src/modes
+import ../src/projects
 
 suite "command registry":
   test "native commands register themselves as the module loads":
@@ -59,6 +60,17 @@ suite "command registry":
     check not hasCommand("no-such-command")
     expect EvaluatorError:
       discard commandValue("no-such-command")
+
+suite "projects":
+  test "serialized projects preserve their configured order when one is active":
+    var manager = ProjectManager.init()
+    check manager.addProject("first", getTempDir() / "nide-project-order-first")
+    check manager.addProject("second", getTempDir() / "nide-project-order-second")
+    check manager.setActiveProject("second")
+
+    let projects = fromOwl(manager.projectsValue(), seq[Project])
+    check projects[0].name == "first"
+    check projects[1].name == "second"
 
 suite "commands from Owl":
   setup:

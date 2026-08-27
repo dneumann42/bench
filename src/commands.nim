@@ -118,15 +118,26 @@ proc stateNumber(env: Environment, key: string): float64 =
       let value = state.entries.getOrDefault(key)
       case value.kind
       of Number:
-        value.number
+        return value.number
       of Text:
-        parseFloat(value.text)
+        return parseFloat(value.text)
       else:
-        0
-    else:
-      0
+        discard
   except CatchableError:
-    0
+    discard
+  if not activeBridge.isNil:
+    try:
+      let value = activeBridge.bridgeGet(key)
+      case value.kind
+      of Number:
+        return value.number
+      of Text:
+        return parseFloat(value.text)
+      else:
+        discard
+    except CatchableError:
+      discard
+  0
 
 proc stateSnapshot*(
     bufferIDs: openArray[string],

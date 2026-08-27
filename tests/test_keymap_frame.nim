@@ -209,6 +209,20 @@ suite "key sequences drive real frames":
     check model.owlErrorApp.lastError == ""
     check not model.status.contains("failed")
 
+  test "ctrl-f cancels a pending ctrl-x prefix and moves forward":
+    discard model.uiRuntime.evaluator.exec(parse(
+        "set editorInputDriver \"emacs\"", "<test>"))
+    ui.beginInputFrame()
+    ui.textInput("ab")
+    ui.layout:
+      ui.nideApplication(model)
+    ui.finishInputFrame()
+    ui.pressKey(model, KeyA, {CtrlPressed})
+    ui.pressKey(model, KeyX, {CtrlPressed})
+    ui.pressKey(model, KeyF, {CtrlPressed})
+    check model.activeEditorSnapshot().cursor == 1
+    check not model.floatingPanelOpen("find-file")
+
   test "ctrl-shift-p opens the command palette and it draws":
     ui.pressKey(model, KeyP, {CtrlPressed, ShiftPressed})
     check model.floatingPanelOpen("command-palette")

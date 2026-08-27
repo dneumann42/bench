@@ -249,6 +249,16 @@ widget project-toolbar:
     height = fit
     gap = 6
     alignItems = AlignCenter
+    when (not (= project nothing)):
+      label (id "project-toolbar" "project-name") project.name:
+        width = fit
+        height = fit
+        padding = 2
+        paddingLeft = 6
+        paddingRight = 6
+        background = color 42 68 70
+        cornerStyle = "rounded"
+        cornerRadius = 10
     button editID "Edit":
       width = fit
       height = fit

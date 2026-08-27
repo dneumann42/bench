@@ -281,11 +281,7 @@ proc heal*(pm: var ProjectManager) =
 proc projectsValue*(pm: ProjectManager): Value =
   var projectValues: seq[Value]
   for project in pm.projects:
-    if project.name == pm.activeProject:
-      projectValues.add project.projectValue()
-  for project in pm.projects:
-    if project.name != pm.activeProject:
-      projectValues.add project.projectValue()
+    projectValues.add project.projectValue()
   list(projectValues)
 
 proc snapshot*(pm: ProjectManager): Value =

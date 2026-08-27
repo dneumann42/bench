@@ -22,11 +22,7 @@ fun project-card project active:
     alignItems = AlignStretch
     background = (pick active (color 31 68 70) (color 31 34 38))
     shadow = active
-    label (id cardID "name") (string (pick active "Active: " "") project.name):
-      width = fill
-      height = fit
-      textScroll = true
-    label (id cardID "path") project.directoryPath:
+    label (id cardID "name") project.name:
       width = fill
       height = fit
       textScroll = true
@@ -36,13 +32,13 @@ fun project-card project active:
       gap = 6
       alignItems = AlignCenter
       when (not active):
-        button openID "Open":
+        button openID "Load":
           width = fill
-          height = fit
+          height = fixed 28
       when active:
         button unloadID "Unload":
-          width = fit
-          height = fit
+          width = fill
+          height = fixed 28
 
 widget projects-panel:
   define:

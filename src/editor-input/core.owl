@@ -141,7 +141,15 @@ fun run-keybindings bindings:
   run-keybindings-owned "default" bindings
 
 fun run-keybindings-owned owner bindings:
-  run-keybindings-in owner (active-keymap owner bindings)
+  if (and (not (empty? pendingKeymap)) (= pendingKeymapOwner owner)):
+    if (run-keybindings-in owner pendingKeymap):
+      true
+    else:
+      do:
+        cancel-key-sequence
+        run-keybindings-in owner bindings
+  else:
+    run-keybindings-in owner (active-keymap owner bindings)
 
 fun run-driver-text-command driver:
   if (= driver.textCommand ""):
