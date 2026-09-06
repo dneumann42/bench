@@ -49,7 +49,7 @@ fun file-explorer-row item:
       buttonPadding = (insets 6 2 6 2)
       buttonBorderStyle = ButtonBorderNone
       buttonChromeStyle = ButtonChromeFlat
-      buttonTextAlign = JustifyStart
+      buttonTextAlign = Start
       background = (pick item.selected (color 43 83 106) (color 0 0 0 0))
       textScroll = true
   tooltip openID item.path
@@ -100,13 +100,13 @@ widget file-explorer-panel:
     height = fill
     padding = 8
     gap = 8
-    alignItems = AlignStretch
+    alignItems = Stretch
     background = color 23 27 31
     column (id "file-explorer" "header"):
       width = fill
       height = fit
       gap = 6
-      alignItems = AlignStretch
+      alignItems = Stretch
       label (id "file-explorer" "title") "Files":
         width = fill
         height = fit
@@ -149,7 +149,7 @@ widget file-explorer-panel:
       gap = 1
       scrollX = true
       scrollY = true
-      alignItems = AlignStretch
+      alignItems = Stretch
       if (empty? rows):
         tree-empty "file-explorer" "No files"
       else:

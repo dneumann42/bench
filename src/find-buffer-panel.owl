@@ -49,7 +49,7 @@ fun buffer-row item currentID:
       buttonPadding = (insets 6 2 6 2)
       buttonBorderStyle = ButtonBorderNone
       buttonChromeStyle = ButtonChromeFlat
-      buttonTextAlign = JustifyStart
+      buttonTextAlign = Start
       background = (pick (= item.id currentID) (color 43 83 106) (color 0 0 0 0))
       textScroll = true
     button killID "":

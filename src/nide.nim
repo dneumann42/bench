@@ -6,6 +6,7 @@ import nest/errorDialogs
 import nest/owldsl
 import nest/resources
 import nest/screen
+import nest/bench
 import sdl3
 
 import buffers, commands, modes, panes, projects
@@ -1024,7 +1025,7 @@ proc panelsValue(model: Nide): Value =
     entries["widget"] = text(panel.widget)
     entries["open"] = boolean(panel.open)
     entries["size"] = number(panel.size)
-    values.add dictionary(entries)
+    values.add record(entries)
   list(values)
 
 proc previewText(text: string): string =
@@ -1050,7 +1051,7 @@ proc buffersValue(model: Nide): Value =
     entries["mode"] = text(string(buffer.fileMode))
     entries["viewer"] = text(buffer.viewer)
     entries["dirty"] = boolean(buffer.dirty())
-    values.add dictionary(entries)
+    values.add record(entries)
   list(values)
 
 proc bufferPreviewText(model: Nide): string =
@@ -1601,16 +1602,14 @@ proc activeEditorCommandRequest(model: var Nide, request: NideBridgeRequest) =
   model.requestFrame()
 
 proc valueText(value: Value, key: string): string =
-  if value.kind == Dictionary and key in value.entries and
-      value.entries[key].kind == Text:
-    value.entries[key].text
+  if value.kind == Record and value.hasKey(key) and value[key].kind == Text:
+    value[key].text
   else:
     ""
 
 proc valueNumber(value: Value, key: string, fallback: float64): float64 =
-  if value.kind == Dictionary and key in value.entries and
-      value.entries[key].kind == Number:
-    value.entries[key].number
+  if value.kind == Record and value.hasKey(key) and value[key].kind == Number:
+    value[key].number
   else:
     fallback
 
@@ -1618,7 +1617,7 @@ proc clampByte(value: float64): uint8 =
   uint8(value.int.clamp(0, 255))
 
 proc syntaxColor(value: Value): nest.Color =
-  if value.kind == Dictionary:
+  if value.kind == Record:
     nest.color(
       value.valueNumber("r", 241).clampByte(),
       value.valueNumber("g", 246).clampByte(),
@@ -1629,7 +1628,7 @@ proc syntaxColor(value: Value): nest.Color =
     nest.color(241, 246, 247)
 
 proc syntaxRule(value: Value): SyntaxRule =
-  if value.kind != Dictionary:
+  if value.kind != Record:
     return
   let kind = value.valueText("kind")
   result.kind =
@@ -1648,17 +1647,17 @@ proc syntaxRule(value: Value): SyntaxRule =
       SyntaxRegex
   result.pattern = value.valueText("pattern")
   result.stopPattern = value.valueText("stop")
-  if "color" in value.entries:
-    result.color = value.entries["color"].syntaxColor()
+  if value.hasKey("color"):
+    result.color = value["color"].syntaxColor()
   else:
     result.color = nest.color(241, 246, 247)
 
 proc syntaxDefinition(value: Value): SyntaxDefinition =
-  if value.kind != Dictionary:
+  if value.kind != Record:
     return
   result.name = value.valueText("name")
-  if "rules" in value.entries and value.entries["rules"].kind == List:
-    for item in value.entries["rules"].items:
+  if value.hasKey("rules") and value["rules"].kind == List:
+    for item in value["rules"].items:
       let rule = item.syntaxRule()
       if rule.pattern.len > 0:
         result.rules.add rule
@@ -1951,9 +1950,9 @@ proc layoutPane(ui: var UI, model: var Nide, paneID: PaneID,
 
     ui.panel(panelID, cfg(width = fill(min = MinPaneWidth),
         height = fill(min = MinPaneHeight), padding = 2, gap = 1,
-        alignSelf = AlignStretch).withBackground(background)):
+        alignSelf = Stretch).withBackground(background)):
       ui.row(ui.id("paneHeader", paneID), cfg(width = fill(), height = fixed(24),
-          gap = 4, alignItems = AlignCenter)):
+          gap = 4, alignItems = Center)):
         ui.label(ui.id("paneTitle", paneID),
             bufferTitle(model.buffers.buffers[pane.bufferID]), width = fill())
         if floatingContent:
@@ -1978,14 +1977,14 @@ proc layoutPane(ui: var UI, model: var Nide, paneID: PaneID,
   elif pane.orientation == Row:
     ui.row(ui.id("row", paneID), cfg(width = fill(min = MinPaneWidth),
         height = fill(min = MinPaneHeight), gap = 4,
-        alignSelf = AlignStretch)):
+        alignSelf = Stretch)):
       for child in pane.children:
         if floatingContent or model.panes.hasDockedLeaf(child):
           ui.layoutPane(model, child, floatingContent)
   else:
     ui.column(ui.id("column", paneID), cfg(width = fill(min = MinPaneWidth),
         height = fill(min = MinPaneHeight), gap = 4,
-        alignSelf = AlignStretch)):
+        alignSelf = Stretch)):
       for child in pane.children:
         if floatingContent or model.panes.hasDockedLeaf(child):
           ui.layoutPane(model, child, floatingContent)
@@ -2005,16 +2004,16 @@ proc renderPanelDock(ui: var UI, model: var Nide, dock: PanelDock) =
         case dock
         of PanelLeft, PanelRight:
           cfg(width = fixed(panel.size), height = fill(), padding = 0, gap = 0,
-              alignItems = AlignStretch)
+              alignItems = Stretch)
         of PanelTop, PanelBottom:
           cfg(width = fill(), height = fixed(panel.size), padding = 0, gap = 0,
-              alignItems = AlignStretch)
+              alignItems = Stretch)
         of PanelFloating:
           cfg(width = fixed(panel.size), height = fill(), padding = 0, gap = 0,
-              alignItems = AlignStretch)
+              alignItems = Stretch)
       ui.column(ui.id("panelDockShell", panel.id), panelConfig):
         ui.row(ui.id("panelDockHeader", panel.id), cfg(width = fill(),
-            height = fit(), padding = 4, gap = 6, alignItems = AlignCenter,
+            height = fit(), padding = 4, gap = 6, alignItems = Center,
             ).withBackground(color(30, 34, 38))):
           ui.label(ui.id("panelDockTitle", panel.id), panel.title, width = fill())
           if ui.button(ui.id("panelDockFloat", panel.id), "", width = fixed(30),
@@ -2033,9 +2032,9 @@ proc renderProcessJobTab(ui: var UI, model: var Nide, index: int) =
     return
   let job = model.processJobs[index]
   ui.column(ui.id("processJob", job.id), cfg(width = fill(), height = fill(),
-      padding = 0, gap = 8, alignItems = AlignStretch)):
+      padding = 0, gap = 8, alignItems = Stretch)):
     ui.row(ui.id("processJobHeader", job.id), cfg(width = fill(), height = fit(),
-        padding = 8, gap = 10, alignItems = AlignCenter).withBackground(
+        padding = 8, gap = 10, alignItems = Center).withBackground(
         color(30, 34, 38))):
       ui.processSpinner(ui.id("processJobIcon", job.id),
           job.status == ProcessRunning, job.status == ProcessSucceeded,
@@ -2053,7 +2052,7 @@ proc renderProcessJobTab(ui: var UI, model: var Nide, index: int) =
         readOnly = true)
 
     ui.row(ui.id("processJobTools", job.id), cfg(width = fill(), height = fit(),
-        padding = 8, gap = 8, alignItems = AlignCenter).withBackground(
+        padding = 8, gap = 8, alignItems = Center).withBackground(
         color(24, 28, 32))):
       if model.processJobs[index].status == ProcessRunning:
         if ui.button(ui.id("processJobKill", job.id), "Kill", width = fixed(74),
@@ -2079,25 +2078,25 @@ proc renderProcessCards(ui: var UI, model: var Nide) =
     return
 
   ui.column(ui.id("processCards"), cfg(width = fixed(360), height = fit(
-      max = 260), gap = 8, padding = 0, alignSelf = AlignEnd,
-      alignItems = AlignStretch)):
+      max = 260), gap = 8, padding = 0, alignSelf = End,
+      alignItems = Stretch)):
     for index in visible:
       let job = model.processJobs[index]
       let cardID = ui.id("processCard", job.id)
       let dismissID = ui.id("processCardDismiss", job.id)
       ui.card(cardID, cfg(width = fill(), height = fixed(64), padding = 8,
           gap = 0,
-          alignSelf = AlignEnd, alignItems = AlignStretch).withBackground(
+          alignSelf = End, alignItems = Stretch).withBackground(
           color(34, 39, 44, 248)).withRadii(12, 0, 0, 12).withShadow()):
         ui.row(ui.id("processCardRow", job.id), cfg(width = fill(),
             height = fixed(48), padding = 0, gap = 8,
-            alignItems = AlignCenter)):
+            alignItems = Center)):
           ui.processSpinner(ui.id("processCardIcon", job.id),
               job.status == ProcessRunning, job.status == ProcessSucceeded,
               job.spinnerFrame)
           ui.column(ui.id("processCardText", job.id), cfg(width = fixed(282),
               height = fixed(42), gap = 2, padding = 0,
-              alignItems = AlignStretch)):
+              alignItems = Stretch)):
             ui.label(ui.id("processCardTitle", job.id),
                 job.kind.commandKindName() & " · " & job.processJobStatusText(),
                 width = fixed(282), height = fixed(19), textScroll = true)
@@ -2158,10 +2157,10 @@ proc renderFloatingDock(ui: var UI, model: var Nide) =
   let floatingDockID = ui.id("floatingDock")
   ui.resizableModalDialog(floatingDockID, model.floatingOpen,
       model.floatingWidth, model.floatingHeight, 720.0, 420.0, 1800.0,
-      1200.0, cfg(padding = 10, gap = 8, alignItems = AlignStretch,
+      1200.0, cfg(padding = 10, gap = 8, alignItems = Stretch,
       ).withBackground(color(21, 24, 28))):
     ui.row(ui.id("floatingDockHeader"), cfg(width = fill(), height = fit(),
-        gap = 8, alignItems = AlignCenter)):
+        gap = 8, alignItems = Center)):
       ui.tabs(ui.id("floatingDockTabs"), labels, model.floatingTab,
           width = fill(), height = fit())
       model.floatingTab = model.floatingTab.clamp(0, labels.high)
@@ -2213,7 +2212,8 @@ widget nideApplication(model: var Nide):
       ui.requestFullRedrawAfter(16)
   ui.flushModelRedraw(model)
   model.uiRuntime.evaluator.env.bindText(VarStatus, model.status)
-  model.publishBridgeData()
+  bench.zone("nide.publishBridge"):
+    model.publishBridgeData()
   if ui.keyPressed("escape"):
     model.closeFloating()
     ui.flushModelRedraw(model)
@@ -2221,83 +2221,95 @@ widget nideApplication(model: var Nide):
   ui.overlay(ui.id("rootOverlay"), cfg(width = fill(), height = fill(), gap = 0)):
     ui.column(ui.id("root"), cfg(width = fill(), height = fill(), gap = 0)):
       if ui.keyboardInputPending():
-        if fileExists(nideKeybindingsPath()):
-          model.uiRuntime.renderWidget(ui, nideKeybindingsPath(),
-              "nide-user-keybindings")
-          discard model.consumeRuntimeError("User keybindings")
+        bench.zone("nide.keybindings"):
+          if fileExists(nideKeybindingsPath()):
+            model.uiRuntime.renderWidget(ui, nideKeybindingsPath(),
+                "nide-user-keybindings")
+            discard model.consumeRuntimeError("User keybindings")
+            model.processBridgeRequests()
+            model.publishBridgeData()
+            ui.flushModelRedraw(model)
+
+          model.uiRuntime.renderWidget(ui, NideSourceDir / "keybindings.owl",
+              "nide-keybindings")
+          discard model.consumeRuntimeError("Keybindings")
           model.processBridgeRequests()
-          model.publishBridgeData()
           ui.flushModelRedraw(model)
 
-        model.uiRuntime.renderWidget(ui, NideSourceDir / "keybindings.owl",
-            "nide-keybindings")
-        discard model.consumeRuntimeError("Keybindings")
-        model.processBridgeRequests()
-        ui.flushModelRedraw(model)
-
-      for event in ui.toolbarDock(model.toolbars, model.uiRuntime, TopDock,
-          NideSourceDir):
-        model.handleToolbarEvent(ui, event)
+      bench.zone("nide.toolbar.top"):
+        for event in ui.toolbarDock(model.toolbars, model.uiRuntime, TopDock,
+            NideSourceDir):
+          model.handleToolbarEvent(ui, event)
       discard model.consumeRuntimeError("Top toolbar")
       model.processBridgeRequests()
       ui.flushModelRedraw(model)
 
-      ui.renderPanelDock(model, PanelTop)
+      bench.zone("nide.panels"):
+        ui.renderPanelDock(model, PanelTop)
 
       ui.row(ui.id("workspaceDockRow"), cfg(width = fill(), height = fill(),
-          gap = 0, alignSelf = AlignStretch)):
-        for event in ui.toolbarDock(model.toolbars, model.uiRuntime, LeftDock,
-            NideSourceDir):
-          model.handleToolbarEvent(ui, event)
+          gap = 0, alignSelf = Stretch)):
+        bench.zone("nide.toolbar.left"):
+          for event in ui.toolbarDock(model.toolbars, model.uiRuntime, LeftDock,
+              NideSourceDir):
+            model.handleToolbarEvent(ui, event)
         discard model.consumeRuntimeError("Left toolbar")
         model.processBridgeRequests()
         ui.flushModelRedraw(model)
 
-        ui.renderPanelDock(model, PanelLeft)
+        bench.zone("nide.panels"):
+          ui.renderPanelDock(model, PanelLeft)
 
         ui.panel(ui.id("workspace"), cfg(width = fill(), height = fill(),
             padding = 6, gap = 4)):
           ui.column(ui.id("workspaceScroll"), cfg(width = fill(), height = fill(),
               scrollX = true, scrollY = true, scrollWheel = false,
-              alignItems = AlignStretch)):
+              alignItems = Stretch)):
             ui.row(ui.id("workspaceRoot"), cfg(width = fill(
                 min = MinWorkspaceWidth), height = fill(min = MinWorkspaceHeight),
                     gap = 0,
-                alignSelf = AlignStretch)):
-              ui.layoutPane(model, model.panes.rootPane)
+                alignSelf = Stretch)):
+              bench.zone("nide.panes"):
+                ui.layoutPane(model, model.panes.rootPane)
               if not model.panes.hasDockedLeaf(model.panes.rootPane):
                 ui.center(ui.id("emptyWorkspace"), fill(), fill()):
                   ui.label(ui.id("emptyWorkspaceLabel"), "All panes are floating",
                       width = fit(), height = fit())
 
-        ui.renderPanelDock(model, PanelRight)
+        bench.zone("nide.panels"):
+          ui.renderPanelDock(model, PanelRight)
 
-        for event in ui.toolbarDock(model.toolbars, model.uiRuntime, RightDock,
-            NideSourceDir):
-          model.handleToolbarEvent(ui, event)
+        bench.zone("nide.toolbar.right"):
+          for event in ui.toolbarDock(model.toolbars, model.uiRuntime, RightDock,
+              NideSourceDir):
+            model.handleToolbarEvent(ui, event)
         discard model.consumeRuntimeError("Right toolbar")
         model.processBridgeRequests()
         ui.flushModelRedraw(model)
 
-      ui.renderPanelDock(model, PanelBottom)
+      bench.zone("nide.panels"):
+        ui.renderPanelDock(model, PanelBottom)
 
-      for event in ui.toolbarDock(model.toolbars, model.uiRuntime, BottomDock,
-          NideSourceDir):
-        model.handleToolbarEvent(ui, event)
+      bench.zone("nide.toolbar.bottom"):
+        for event in ui.toolbarDock(model.toolbars, model.uiRuntime, BottomDock,
+            NideSourceDir):
+          model.handleToolbarEvent(ui, event)
       discard model.consumeRuntimeError("Bottom toolbar")
       model.processBridgeRequests()
       ui.flushModelRedraw(model)
 
-      ui.statusbar(model.uiRuntime)
+      bench.zone("nide.statusbar"):
+        ui.statusbar(model.uiRuntime)
       model.processBridgeRequests()
       ui.flushModelRedraw(model)
 
     ui.overlay(ui.id("processCardsOverlay"), cfg(width = fill(), height = fill(),
-        padding = 14, paddingBottom = 50, gap = 0, alignItems = AlignEnd,
-        justifyContent = JustifyEnd)):
+        padding = 14, paddingBottom = 50, gap = 0, alignItems = End,
+        justifyContent = End)):
       ui.renderProcessCards(model)
 
-  ui.renderFloatingDock(model)
+  bench.zone("nide.floatingDock"):
+    ui.renderFloatingDock(model)
   if model.owlErrorApp.lastError.len > 0:
     model.owlErrorApp.runtime.renderErrorDialog(ui, model.owlErrorApp.lastError)
   ui.flushModelRedraw(model)

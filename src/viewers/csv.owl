@@ -77,13 +77,13 @@ widget nide-csv-table-view key rows:
     height = fill
     scrollX = true
     scrollY = true
-    alignItems = AlignStretch
+    alignItems = Stretch
     if (empty? rowValues):
       column (id "csv-viewer" keyText "empty"):
         width = fill
         height = fill
-        justifyContent = JustifyCenter
-        alignItems = AlignCenter
+        justifyContent = Center
+        alignItems = Center
         label (id "csv-viewer" keyText "empty-label") "No CSV rows":
           width = fit
           height = fit
@@ -121,13 +121,13 @@ widget nide-csv-file-viewer bufferID:
     width = fill
     height = fill
     gap = 0
-    alignItems = AlignStretch
+    alignItems = Stretch
     row (id "csv-viewer" key "toolbar"):
       width = fill
       height = fixed 34
       padding = (insets 6 4 6 4)
       gap = 8
-      alignItems = AlignCenter
+      alignItems = Center
       background = (color 24 28 32)
       tabs (id "csv-viewer" key "tabs") labels selected:
         width = fixed 240

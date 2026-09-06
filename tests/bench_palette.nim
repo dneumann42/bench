@@ -6,11 +6,15 @@
 ## was worth making.
 ##
 ##   nim c -r -d:release -d:nideNoMain tests/bench_palette.nim [frames]
+##
+## Add `-d:nestBench` to get the per-phase breakdown of every scenario, and
+## `-d:nestBenchDetail` on top of that to break the draw pass down per
+## component. `NEST_BENCH_JSON=path` also writes the last scenario as JSON.
 
 import std/[monotimes, os, sequtils, strformat, strutils]
 from std/times import inNanoseconds
 
-import nest/[coords, input, palette, resources, screen, ui]
+import nest/[bench, coords, input, palette, resources, screen, ui]
 import nest/owldsl
 import owl
 
@@ -108,25 +112,36 @@ proc newUI(): UI =
   result.loadFont("editor", "", 18)
 
 proc frame(ui: var UI, model: var Nide) =
-  ui.beginInputFrame()
-  ui.layout:
-    ui.nideApplication(model)
-  ui.finishInputFrame()
+  bench.frame:
+    ui.beginInputFrame()
+    ui.layout:
+      ui.nideApplication(model)
+    ui.finishInputFrame()
 
 proc frameWithKey(ui: var UI, model: var Nide, key: input.KeyCode,
     mods: set[Modifier] = {}) =
-  ui.beginInputFrame()
-  ui.keyDown(key, mods)
-  ui.layout:
-    ui.nideApplication(model)
-  ui.finishInputFrame()
+  bench.frame:
+    ui.beginInputFrame()
+    ui.keyDown(key, mods)
+    ui.layout:
+      ui.nideApplication(model)
+    ui.finishInputFrame()
 
 proc frameWithText(ui: var UI, model: var Nide, text: string) =
-  ui.beginInputFrame()
-  ui.textInput(text)
-  ui.layout:
-    ui.nideApplication(model)
-  ui.finishInputFrame()
+  bench.frame:
+    ui.beginInputFrame()
+    ui.textInput(text)
+    ui.layout:
+      ui.nideApplication(model)
+    ui.finishInputFrame()
+
+proc frameResized(ui: var UI, model: var Nide, width, height: int) =
+  bench.frame:
+    ui.beginInputFrame()
+    ui.resizeWindow(width, height)
+    ui.layout:
+      ui.nideApplication(model)
+    ui.finishInputFrame()
 
 type Sample = object
   label: string
@@ -147,6 +162,8 @@ proc measure(label: string, frames: int, body: proc(index: int)): Sample =
   # One warm pass first: the first frame after a state change pays for caches
   # and font loads that steady-state frames do not.
   body(0)
+  bench.reset()
+  bench.setLabel(label)
   let
     startMem = getOccupiedMem()
     start = getMonoTime()
@@ -155,6 +172,8 @@ proc measure(label: string, frames: int, body: proc(index: int)): Sample =
   let
     elapsed = (getMonoTime() - start).inNanoseconds.float64 / 1_000_000.0
     usedMem = getOccupiedMem() - startMem
+  when bench.enabled():
+    echo bench.summary()
   Sample(
     label: label,
     msPerFrame: elapsed / frames.float64,
@@ -219,15 +238,66 @@ proc main() =
     var model = bootedNide()
     var ui = newUI()
     frame(ui, model)
+    samples.add measure("resize, rebuilt", frames, proc(index: int) =
+      # A compositor drag reports a new size every frame; this is the shape of
+      # the event stream, not a single jump to a final size.
+      let step = index mod 120
+      frameResized(ui, model, 900 + step * 4, 640 + step * 2))
+
+  block:
+    var model = bootedNide()
+    var ui = newUI()
+    frame(ui, model)
+    samples.add measure("resize, fast pass", frames, proc(index: int) =
+      # What the runtime actually does with a resize event: re-solve the
+      # frame that is already on screen rather than rebuild it.
+      let step = index mod 120
+      bench.frame:
+        ui.beginInputFrame()
+        doAssert ui.resolveRetainedFrame(900 + step * 4, 640 + step * 2),
+          "the resize fast pass refused; this is measuring the wrong thing"
+        ui.finishInputFrame())
+
+  block:
+    var model = bootedNide()
+    var ui = newUI()
+    frame(ui, model)
+    samples.add measure("hover, rebuilt", frames, proc(index: int) =
+      bench.frame:
+        ui.beginInputFrame()
+        ui.mouseMove(40 + index mod 400, 20 + index mod 300)
+        ui.layout:
+          ui.nideApplication(model)
+        ui.finishInputFrame())
+
+  block:
+    var model = bootedNide()
+    var ui = newUI()
+    frame(ui, model)
+    samples.add measure("hover, fast pass", frames, proc(index: int) =
+      # What the runtime actually does with pointer motion: hit test against
+      # the frame on screen and repaint only if the hover changed.
+      bench.frame:
+        ui.beginInputFrame()
+        ui.mouseMove(40 + index mod 400, 20 + index mod 300)
+        discard ui.updateRetainedFrame()
+        ui.finishInputFrame())
+
+  block:
+    var model = bootedNide()
+    var ui = newUI()
+    frame(ui, model)
     samples.add measure("keybindings widget alone", frames, proc(index: int) =
-      ui.beginInputFrame()
-      ui.keyDown(KeyF12, {})
-      ui.layout:
-        model.uiRuntime.renderWidget(ui, NideSourceDir / "keybindings.owl",
-            "nide-keybindings")
-      ui.finishInputFrame())
+      bench.frame:
+        ui.beginInputFrame()
+        ui.keyDown(KeyF12, {})
+        ui.layout:
+          model.uiRuntime.renderWidget(ui, NideSourceDir / "keybindings.owl",
+              "nide-keybindings")
+        ui.finishInputFrame())
 
   report(samples)
+  bench.finish()
 
 when isMainModule:
   main()

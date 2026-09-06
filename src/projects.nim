@@ -145,7 +145,7 @@ proc projectProfileTemplates*(): seq[ProjectProfile] =
 proc profileCommandValue(command: string): Value =
   var entries = initTable[string, Value]()
   entries["shellCommand"] = text(command)
-  dictionary(entries)
+  record(entries)
 
 proc projectProfileValue*(profile: ProjectProfile): Value =
   var
@@ -154,8 +154,8 @@ proc projectProfileValue*(profile: ProjectProfile): Value =
   entries["name"] = text(profile.name)
   for kind in ProjectCommandKinds:
     commands[kind.commandKindName()] = profileCommandValue(profile.command(kind))
-  entries["profileCommands"] = dictionary(commands)
-  dictionary(entries)
+  entries["profileCommands"] = record(commands)
+  record(entries)
 
 proc projectProfileTemplatesValue*(): Value =
   var values: seq[Value]
@@ -172,7 +172,7 @@ proc projectValue*(project: Project): Value =
   for profile in project.profiles:
     profiles.add profile.projectProfileValue()
   entries["profiles"] = list(profiles)
-  dictionary(entries)
+  record(entries)
 
 proc init*(T: typedesc[ProjectManager]): T =
   ProjectManager(projects: @[], activeProject: InvalidProjectName)
@@ -288,7 +288,7 @@ proc snapshot*(pm: ProjectManager): Value =
   var entries = initTable[string, Value]()
   entries["activeProject"] = text(pm.activeProject)
   entries["projects"] = pm.projectsValue()
-  dictionary(entries)
+  record(entries)
 
 proc write*(stream: Stream, pm: ProjectManager) =
   var owlCode = pm.toOwl()
@@ -297,8 +297,8 @@ proc write*(stream: Stream, pm: ProjectManager) =
 
 proc read*(stream: Stream, T: typedesc[ProjectManager]): T =
   let loaded = loadOwlSource(stream.readAll(), mode = restrictedOwlData)
-  if loaded.kind == List and loaded.listLen > 0:
-    result = fromOwl(loaded.at(0), T)
+  if loaded.kind == List and loaded.len > 0:
+    result = fromOwl(loaded[0], T)
   else:
     fromOwl(loaded, result)
   result.heal()

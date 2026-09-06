@@ -99,7 +99,7 @@ block-command finder-panel panelKey queryID:
     height = fill
     padding = 8
     gap = 8
-    alignItems = AlignStretch
+    alignItems = Stretch
     background = color 23 27 31
     lineInput queryWidget "":
       width = fill
@@ -109,7 +109,7 @@ block-command finder-panel panelKey queryID:
       width = fill
       height = fill
       gap = 8
-      alignItems = AlignStretch
+      alignItems = Stretch
       eval block
 
 ; The results column takes its width from the caller: a finder with a preview
@@ -125,7 +125,7 @@ block-command finder-results resultsID rows emptyMessage resultsWidth:
     height = fill
     gap = 1
     scrollY = true
-    alignItems = AlignStretch
+    alignItems = Stretch
     if (empty? rowItems):
       label (id resultsWidget "empty") emptyText:
         width = fill

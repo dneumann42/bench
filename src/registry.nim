@@ -199,7 +199,7 @@ proc commandEntry(command: NideCommand): Value {.raises: [].} =
   for tag in command.tags:
     tags.add text(tag)
   entries["tags"] = list(tags)
-  dictionary(entries)
+  record(entries)
 
 proc defcommandCommand(
     env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,

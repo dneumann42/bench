@@ -131,14 +131,14 @@ fun palette-row-for wanted rows:
 
   test "a row carries the description and the keys that reach it":
     let row = runtime.evaluate("""palette-row-for "find-file" (palette-items)""")
-    check row.kind == Dictionary
-    check row.entries["description"].text == "Open the file finder."
-    check row.entries["keybindings"].text == "Ctrl+x f"
+    check row.kind == Record
+    check row["description"].text == "Open the file finder."
+    check row["keybindings"].text == "Ctrl+x f"
 
   test "a row for an unbound command shows no keys":
     let row = runtime.evaluate("""palette-row-for "file-save-as" (palette-items)""")
-    check row.kind == Dictionary
-    check row.entries["keybindings"].text == ""
+    check row.kind == Record
+    check row["keybindings"].text == ""
 
   test "accessors are not offered":
     let row = runtime.evaluate(
@@ -148,11 +148,11 @@ fun palette-row-for wanted rows:
   test "ranking a query keeps matching rows and marks one selected":
     let rows = runtime.evaluate("""command-palette-rows (palette-items) "find" "" """)
     check rows.kind == List
-    check rows.listLen > 0
-    check rows.listLen < 20
+    check rows.len > 0
+    check rows.len < 20
     var selected = 0
     for row in rows.items:
-      if row.entries["selected"].boolean:
+      if row["selected"].boolean:
         inc selected
     check selected == 1
 
@@ -166,5 +166,5 @@ defcommand say-something:
   nothing
 """)
     let row = runtime.evaluate("""palette-row-for "say-something" (palette-items)""")
-    check row.kind == Dictionary
-    check row.entries["description"].text == "A command defined in a script."
+    check row.kind == Record
+    check row["description"].text == "A command defined in a script."

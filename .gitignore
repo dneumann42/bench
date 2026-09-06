@@ -2,9 +2,17 @@
 *
 !*.*
 !*/
+
+# Atlas workspace
+deps/
+nim.cfg
+deps.dot
+
+# Nimble workspace
 nimble.develop
 nimble.paths
 nimbledeps
+
 .flatpak-builder
 .flatpak-repo
 *.out

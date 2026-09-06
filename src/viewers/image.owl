@@ -18,13 +18,13 @@ widget nide-image-file-viewer bufferID:
     width = fill
     height = fill
     gap = 0
-    alignItems = AlignStretch
+    alignItems = Stretch
     row (id "image-viewer" key "toolbar"):
       width = fill
       height = fixed 32
       padding = (insets 6 4 6 4)
       gap = 8
-      alignItems = AlignCenter
+      alignItems = Center
       background = (color 24 28 32)
       label (id "image-viewer" key "name") name:
         width = fill
@@ -47,7 +47,7 @@ widget nide-image-file-viewer bufferID:
       height = fill
       padding = 0
       gap = 0
-      alignItems = AlignStretch
+      alignItems = Stretch
       background = (color 18 21 24)
       imageViewer canvasID path:
         width = fill

@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - 'v*'
@@ -10,6 +11,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  NIM_VERSION: '2.2.10'
 
 jobs:
 
@@ -19,15 +21,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/cache@v4
-        with:
-          path: ~/.nimble
-          key: nimble-linux-${{ hashFiles('nide.nimble') }}
-          restore-keys: nimble-linux-
-
       - uses: jiro4989/setup-nim-action@v2
         with:
-          nim-version: '2.2.8'
+          nim-version: ${{ env.NIM_VERSION }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: jurplel/install-qt-action@v4
@@ -209,18 +205,12 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: ~/.nimble
-          key: nimble-linux-${{ hashFiles('nide.nimble') }}
-          restore-keys: nimble-linux-
-
-      - uses: actions/cache@v4
-        with:
           path: ~/.local/share/flatpak
           key: flatpak-kde-6.10
 
       - uses: jiro4989/setup-nim-action@v2
         with:
-          nim-version: '2.2.8'
+          nim-version: ${{ env.NIM_VERSION }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: jurplel/install-qt-action@v4

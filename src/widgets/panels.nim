@@ -39,25 +39,25 @@ proc name*(dock: PanelDock): string =
 
 proc textField(value: Value, field, owner: string): string {.raises: [
     EvaluatorError].} =
-  if value.kind != Dictionary or field notin value.entries:
+  if value.kind != Record or not value.hasKey(field):
     raise newException(EvaluatorError, owner & " is missing " & field)
-  let entry = value.entries.getOrDefault(field)
+  let entry = value[field]
   if entry.kind != Text:
     raise newException(EvaluatorError, owner & "." & field & " must be text")
   entry.text
 
 proc boolField(value: Value, field, owner: string): bool {.raises: [
     EvaluatorError].} =
-  if value.kind != Dictionary or field notin value.entries:
+  if value.kind != Record or not value.hasKey(field):
     return false
-  value.entries.getOrDefault(field).isTruthy
+  value[field].isTruthy
 
 proc numberField(value: Value, field, owner: string,
     fallback: float64): float64 {.
     raises: [EvaluatorError].} =
-  if value.kind != Dictionary or field notin value.entries:
+  if value.kind != Record or not value.hasKey(field):
     return fallback
-  let entry = value.entries.getOrDefault(field)
+  let entry = value[field]
   if entry.kind != Number:
     raise newException(EvaluatorError, owner & "." & field & " must be a number")
   entry.number
@@ -67,7 +67,7 @@ proc panelValue(kind: string, fields: openArray[(string, Value)]): Value =
   entries["kind"] = text(kind)
   for (name, value) in fields:
     entries[name] = value
-  dictionary(entries)
+  record(entries)
 
 proc expectArgumentCount(commandID: string, actual: int,
     expected: openArray[int]) {.raises: [EvaluatorError].} =

@@ -5,8 +5,8 @@
 ## has to hand the collected set to Owl. See `registry.nim` for what a command
 ## is and how Owl defines its own.
 
-import std/[algorithm, math, os, sets, streams, strutils, tables, sugar,
-  times, unicode]
+import std/[algorithm, math, monotimes, os, sets, streams, strutils, tables,
+  sugar, times, unicode]
 import owl
 import registry
 export registry
@@ -69,12 +69,6 @@ var activeBridge: NideOwlBridge
 proc textList*(items: openArray[string]): Value =
   list(collect(for item in items: text(item)))
 
-proc dictionaryValue(fields: openArray[(string, Value)]): Value =
-  var entries = initTable[string, Value]()
-  for (key, value) in fields:
-    entries[key] = value
-  dictionary(entries)
-
 proc bindvalue*(env: Environment, name: string, value: Value) =
   env.define(name, value)
 
@@ -104,8 +98,8 @@ proc valueText(value: Value): string =
 proc stateField(env: Environment, key: string): string =
   try:
     let state = env.get(VarState)
-    if state.kind == Dictionary and state.entries.hasKey(key):
-      valueText(state.entries.getOrDefault(key))
+    if state.kind == Record and state.hasKey(key):
+      valueText(state[key])
     else:
       ""
   except EvaluatorError:
@@ -114,8 +108,8 @@ proc stateField(env: Environment, key: string): string =
 proc stateNumber(env: Environment, key: string): float64 =
   try:
     let state = env.get(VarState)
-    if state.kind == Dictionary and state.entries.hasKey(key):
-      let value = state.entries.getOrDefault(key)
+    if state.kind == Record and state.hasKey(key):
+      let value = state[key]
       case value.kind
       of Number:
         return value.number
@@ -168,7 +162,7 @@ proc stateSnapshot*(
   entries["active-editor-selected-text"] = text(activeEditorSelectedText)
   entries["active-editor-input-driver"] = text(activeEditorInputDriver)
   entries["active-editor-cursor-style"] = text(activeEditorCursorStyle)
-  dictionary(entries)
+  record(entries)
 
 proc readText*(env: Environment, name: string): string =
   try:
@@ -236,10 +230,10 @@ proc textListContains(items: openArray[string], target: string): bool =
     if item == target:
       return true
 
-proc dictionaryText(value: Value, key: string): string =
-  if value.kind != Dictionary or not value.entries.hasKey(key):
+proc textField(value: Value, key: string): string =
+  if value.kind != Record or not value.hasKey(key):
     return ""
-  let entry = value.entries.getOrDefault(key)
+  let entry = value[key]
   if entry.kind == Text:
     entry.text
   else:
@@ -256,7 +250,7 @@ proc requestAction(env: Environment, action: string) {.raises: [EvaluatorError].
       list(@[])
   if actions.kind != List:
     raise newException(EvaluatorError, VarRequestedActions & " must be a list")
-  env.set(VarRequestedActions, actions.listAppended(text(action)))
+  env.set(VarRequestedActions, actions & text(action))
 
 # ---------------------------------------------------------------------------
 # Command families
@@ -439,7 +433,7 @@ for (id, editorCommand, description) in [
   ("editor-redo", "redo", "Redo the last undone editor change."),
 ]:
   registerEditorCommand(id, editorCommand, description)
-proc detectFileIconMode(): string {.raises: [].} =
+proc probeFileIconMode(): string {.raises: [].} =
   for directory in [
     getHomeDir() / ".local" / "share" / "fonts",
     getHomeDir() / ".fonts",
@@ -458,6 +452,18 @@ proc detectFileIconMode(): string {.raises: [].} =
     except CatchableError:
       discard
   "unicode"
+
+var fileIconMode = ""
+
+proc detectFileIconMode(): string {.raises: [].} =
+  ## Which icon set the file tree can use, worked out once.
+  ##
+  ## Deciding this means walking every system font directory looking for a
+  ## Nerd Font, which is not something to do again for every row of every
+  ## frame -- and the answer cannot change while the editor is running.
+  if fileIconMode.len == 0:
+    fileIconMode = probeFileIconMode()
+  fileIconMode
 
 proc fileIcon(name: string, isDir: bool, mode: string): string =
   if mode == "nerd":
@@ -531,8 +537,19 @@ proc sortedDirEntries(path, sortMode: string, showHidden, showDirs,
     cmp(a.name.toLowerAscii(), b.name.toLowerAscii())
   )
 
-proc addFileTreeRows(rows: var seq[Value], path: string, depth: int,
-    expanded: HashSet[string], selectedPath, query, sortMode, iconMode: string,
+type FileTreeRow = object
+  ## One row of the file tree, before it becomes an Owl value.
+  ##
+  ## The scan produces every row in the tree and the panel shows a couple of
+  ## dozen, so the rows are kept in this shape and only the ones in the window
+  ## are turned into records. Whether a row is the selected one is deliberately
+  ## not in here: selection changes constantly and must not invalidate a scan.
+  path, name, icon: string
+  isDir, expanded, hasChildren: bool
+  depth: int
+
+proc addFileTreeRows(rows: var seq[FileTreeRow], path: string, depth: int,
+    expanded: HashSet[string], query, sortMode, iconMode: string,
     showHidden, showDirs, showFiles: bool, remaining: var int): bool =
   if remaining <= 0:
     return false
@@ -548,39 +565,86 @@ proc addFileTreeRows(rows: var seq[Value], path: string, depth: int,
       selfMatches = queryLower.len == 0 or entry.name.toLowerAscii().contains(
           queryLower) or
         entry.path.toLowerAscii().contains(queryLower)
-    var childRows: seq[Value]
+    var childRows: seq[FileTreeRow]
     var childMatches = false
     if entry.isDir and (childExpanded or queryLower.len > 0):
       childMatches = addFileTreeRows(childRows, entry.path, depth + 1,
-          expanded, selectedPath, query, sortMode, iconMode, showHidden,
+          expanded, query, sortMode, iconMode, showHidden,
           showDirs, showFiles, remaining)
     if queryLower.len == 0 or selfMatches or childMatches:
       matchedAny = true
-      rows.add dictionaryValue([
-        ("path", text(entry.path)),
-        ("name", text(entry.name)),
-        ("kind", text(if entry.isDir: "directory" else: "file")),
-        ("isDir", boolean(entry.isDir)),
-        ("depth", number(depth.float64)),
-        ("expanded", boolean(childExpanded)),
-        ("hasChildren", boolean(hasChildren)),
-        ("selected", boolean(entry.path == selectedPath)),
-        ("icon", text(fileIcon(entry.name, entry.isDir, iconMode))),
-      ])
+      rows.add FileTreeRow(
+        path: entry.path,
+        name: entry.name,
+        icon: fileIcon(entry.name, entry.isDir, iconMode),
+        isDir: entry.isDir,
+        expanded: childExpanded,
+        hasChildren: hasChildren,
+        depth: depth,
+      )
       dec remaining
       if childExpanded or queryLower.len > 0:
         rows.add childRows
   matchedAny
 
-proc fileTreeRows(root: string, expandedList: seq[string], selectedPath, query,
-    sortMode: string, showHidden, showDirs, showFiles: bool): seq[Value] =
+const FileTreeCacheMs = 2000
+  ## How long a scan stands before the tree is walked again.
+  ##
+  ## Files can appear and disappear underneath the editor, so a scan cannot be
+  ## kept forever, but re-walking it for every frame of a scroll is thousands
+  ## of directory reads to answer a question whose answer did not change. The
+  ## refresh button invalidates it outright.
+
+var
+  fileTreeCacheKey = ""
+  fileTreeCacheRows: seq[FileTreeRow]
+  fileTreeCacheAt: MonoTime
+  fileTreeCacheValid = false
+
+proc invalidateFileTreeCache*() =
+  ## Forget the cached file tree scan, so the next look walks the disk.
+  fileTreeCacheValid = false
+
+proc fileTreeRows(root: string, expandedList: seq[string], query,
+    sortMode: string, showHidden, showDirs, showFiles: bool): seq[FileTreeRow] =
+  ## Every row of the file tree under `root`, from cache when it still stands.
+  var key = root & "\u0000" & query & "\u0000" & sortMode & "\u0000" &
+    $showHidden & $showDirs & $showFiles
+  for item in expandedList:
+    key.add "\u0000"
+    key.add item
+  # A monotonic clock, so a wall clock that steps does not either freeze the
+  # cache or throw it away.
+  let now = getMonoTime()
+  if fileTreeCacheValid and fileTreeCacheKey == key and
+      (now - fileTreeCacheAt).inMilliseconds < FileTreeCacheMs:
+    return fileTreeCacheRows
+
   let iconMode = detectFileIconMode()
   var expanded = initHashSet[string]()
   for item in expandedList:
     expanded.incl item.expandTilde()
   var remaining = 5000
-  discard addFileTreeRows(result, root, 0, expanded, selectedPath, query,
+  discard addFileTreeRows(result, root, 0, expanded, query,
       sortMode, iconMode, showHidden, showDirs, showFiles, remaining)
+  fileTreeCacheKey = key
+  fileTreeCacheRows = result
+  fileTreeCacheAt = now
+  fileTreeCacheValid = true
+
+proc fileTreeRowValue(row: FileTreeRow, selectedPath: string): Value =
+  ## Turn one scanned row into the record the panel reads.
+  record([
+    ("path", text(row.path)),
+    ("name", text(row.name)),
+    ("kind", text(if row.isDir: "directory" else: "file")),
+    ("isDir", boolean(row.isDir)),
+    ("depth", number(row.depth.float64)),
+    ("expanded", boolean(row.expanded)),
+    ("hasChildren", boolean(row.hasChildren)),
+    ("selected", boolean(row.path == selectedPath)),
+    ("icon", text(row.icon)),
+  ])
 
 proc fuzzyScore(haystack, needle: string): int =
   if needle.len == 0:
@@ -910,7 +974,7 @@ proc syntaxRule(env: Environment, arguments: seq[SyntaxNode],
       2
     else:
       1
-  dictionaryValue([
+  record([
     ("kind", text(kind)),
     ("pattern", text(pattern)),
     ("stop", text(stop)),
@@ -927,7 +991,7 @@ proc rgbCommand(
   if arguments.len notin {3, 4}:
     raise newException(EvaluatorError,
         "rgb expects red, green, blue, and optional alpha")
-  dictionaryValue([
+  record([
     ("r", number(env.evalNumberArgument(arguments, 0, "rgb"))),
     ("g", number(env.evalNumberArgument(arguments, 1, "rgb"))),
     ("b", number(env.evalNumberArgument(arguments, 2, "rgb"))),
@@ -995,7 +1059,7 @@ proc syntaxCommand(
   let rules = env.eval(arguments[1])
   if rules.kind != List:
     raise newException(EvaluatorError, "syntax expects a rule list")
-  dictionaryValue([
+  record([
     ("name", text(name)),
     ("rules", rules),
   ])
@@ -1092,7 +1156,7 @@ proc listWindowCommand(
   if rows.kind != List:
     raise newException(EvaluatorError, "list-window expects a list of rows")
   let window = rowWindow(
-    rows.listLen,
+    rows.len,
     env.evalNumberArgument(arguments, 1, "list-window"),
     env.evalNumberArgument(arguments, 2, "list-window"),
     env.evalNumberArgument(arguments, 3, "list-window").int,
@@ -1100,12 +1164,12 @@ proc listWindowCommand(
   )
   var visible: seq[Value]
   for index in window.first ..< window.stop:
-    visible.add rows.at(index)
-  dictionaryValue([
+    visible.add rows[index]
+  record([
     ("rows", list(visible)),
     ("before", number(window.before.float64)),
     ("after", number(window.after.float64)),
-    ("total", number(rows.listLen.float64)),
+    ("total", number(rows.len.float64)),
   ])
 
 proc fileTreeVisibleCommand(
@@ -1128,8 +1192,11 @@ proc fileTreeVisibleCommand(
     filterMode = env.evalTextArgument(arguments, 6, "file-tree-visible")
     showDirs = filterMode != "files"
     showFiles = filterMode != "directories"
-  list(fileTreeRows(root, expandedList, selectedPath, query, sortMode,
-      showHidden, showDirs, showFiles))
+  var rows: seq[Value]
+  for row in fileTreeRows(root, expandedList, query, sortMode, showHidden,
+      showDirs, showFiles):
+    rows.add fileTreeRowValue(row, selectedPath)
+  list(rows)
 
 proc fileTreeWindowCommand(
     env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
@@ -1156,13 +1223,15 @@ proc fileTreeWindowCommand(
     overscan = max(env.evalNumberArgument(arguments, 10, "file-tree-window").int, 0)
     showDirs = filterMode != "files"
     showFiles = filterMode != "directories"
-    allRows = fileTreeRows(root, expandedList, selectedPath, query, sortMode,
+    allRows = fileTreeRows(root, expandedList, query, sortMode,
         showHidden, showDirs, showFiles)
     window = rowWindow(allRows.len, scrollY, viewportHeight, rowHeight, overscan)
+  # Only the rows the panel is about to declare become Owl values. The rest of
+  # the tree stays as scanned data that costs nothing to keep.
   var rows: seq[Value]
   for index in window.first ..< window.stop:
-    rows.add allRows[index]
-  dictionaryValue([
+    rows.add fileTreeRowValue(allRows[index], selectedPath)
+  record([
     ("rows", list(rows)),
     ("before", number(window.before.float64)),
     ("after", number(window.after.float64)),
@@ -1185,6 +1254,8 @@ proc fileExplorerEventCommand(
       env.eval(arguments[1])
     else:
       text("")
+  if action == "refresh":
+    invalidateFileTreeCache()
   activeBridge.request("file-explorer." & action, [target])
   boolean(true)
 
@@ -1240,7 +1311,7 @@ proc projectFilesWindowCommand(
       break
     let selected = candidate.path == selectedPath or
       (selectedPath.len == 0 and index == 0)
-    rows.add dictionaryValue([
+    rows.add record([
       ("path", text(candidate.path)),
       ("name", text(candidate.name)),
       ("relative", text(candidate.relative)),
@@ -1291,21 +1362,12 @@ proc filePreviewTextCommand(
   except CatchableError as error:
     raise newException(EvaluatorError, error.msg)
 
-proc recordField(value: Value, name: string): Value {.raises: [].} =
-  case value.kind
-  of Record:
-    value.recordEntries.getOrDefault(name)
-  of Dictionary:
-    value.entries.getOrDefault(name)
-  else:
-    nothing()
-
 proc keyBindingStroke(binding: Value): string {.raises: [].} =
-  if recordField(binding, "ctrl").isTruthy: result.add "Ctrl+"
-  if recordField(binding, "alt").isTruthy: result.add "Alt+"
-  if recordField(binding, "shift").isTruthy: result.add "Shift+"
-  if recordField(binding, "gui").isTruthy: result.add "Meta+"
-  let key = recordField(binding, "key")
+  if binding["ctrl"].isTruthy: result.add "Ctrl+"
+  if binding["alt"].isTruthy: result.add "Alt+"
+  if binding["shift"].isTruthy: result.add "Shift+"
+  if binding["gui"].isTruthy: result.add "Meta+"
+  let key = binding["key"]
   if key.kind == Text:
     result.add key.text
 
@@ -1317,13 +1379,13 @@ proc collectKeybindingLabels(bindings: Value, prefix: string,
   for binding in bindings.items:
     let stroke = keyBindingStroke(binding)
     let chord = if prefix.len == 0: stroke else: prefix & " " & stroke
-    let id = recordField(binding, "commandID")
+    let id = binding["commandID"]
     if id.kind == Text and id.text.len > 0:
       if id.text in labels:
         labels[id.text] = labels.getOrDefault(id.text) & ", " & chord
       else:
         labels[id.text] = chord
-    collectKeybindingLabels(recordField(binding, "children"), chord, labels)
+    collectKeybindingLabels(binding["children"], chord, labels)
 
 proc keybindingLabelsCommand(
     env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
@@ -1340,7 +1402,7 @@ proc keybindingLabelsCommand(
   var entries = initTable[string, Value]()
   for id, label in labels:
     entries[id] = text(label)
-  dictionary(entries)
+  record(entries)
 
 proc commandKeybindingLabelCommand(
     env: Environment, arguments: seq[SyntaxNode], layout: LayoutKind,
@@ -1355,10 +1417,10 @@ proc commandKeybindingLabelCommand(
         "command-keybinding-label expects a label map and a command id")
   let labels = env.eval(arguments[0])
   let id = env.evalTextArgument(arguments, 1, "command-keybinding-label")
-  if labels.kind != Dictionary:
+  if labels.kind != Record:
     raise newException(EvaluatorError,
         "command-keybinding-label expects a label map")
-  let label = labels.entries.getOrDefault(id)
+  let label = labels[id]
   if label.kind == Text: label else: text("")
 
 proc commandGenerationCommand(
@@ -1410,16 +1472,16 @@ proc commandPaletteRowsCommand(
     raise newException(EvaluatorError, "command-palette-rows expects a list")
   var ranked: seq[tuple[score: int, id: string, row: Value]]
   for row in candidates.items:
-    if row.kind != Dictionary:
+    if row.kind != Record:
       continue
     let searchable = (
-      row.dictionaryText("id") & " " &
-      row.dictionaryText("description") & " " &
-      row.dictionaryText("keybindings")
+      row.textField("id") & " " &
+      row.textField("description") & " " &
+      row.textField("keybindings")
     ).toLowerAscii()
     if not matchesFuzzy(searchable, query):
       continue
-    ranked.add((fuzzyScore(searchable, query), row.dictionaryText("id"), row))
+    ranked.add((fuzzyScore(searchable, query), row.textField("id"), row))
   ranked.sort(proc(a, b: tuple[score: int, id: string, row: Value]): int =
     result = cmp(b.score, a.score)
     if result != 0:
@@ -1431,8 +1493,8 @@ proc commandPaletteRowsCommand(
     if index >= MaxFinderRows:
       break
     var row = candidate.row
-    row.entries["selected"] = boolean(
-      row.dictionaryText("id") == selectedID or
+    row["selected"] = boolean(
+      row.textField("id") == selectedID or
       (selectedID.len == 0 and index == 0)
     )
     rows.add row

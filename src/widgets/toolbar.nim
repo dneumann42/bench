@@ -59,7 +59,12 @@ type
   Toolbars* = object
     bars*: seq[Toolbar]
 
-  ToolbarEvent* {.variant.} = object
+  ToolbarEventKind* = enum
+    MenuClicked
+    MenuItemClicked
+    ToolClicked
+
+  ToolbarEvent* = object
     toolbarID*: string
     commandID*: string
     case kind*: ToolbarEventKind
@@ -208,28 +213,28 @@ proc evalListArgument(
 
 proc textField(value: Value, field, owner: string): string {.raises: [
     EvaluatorError].} =
-  if value.kind != Dictionary or field notin value.entries:
+  if value.kind != Record or not value.hasKey(field):
     raise newException(EvaluatorError, owner & " is missing " & field)
-  let entry = value.entries.getOrDefault(field)
+  let entry = value[field]
   if entry.kind != Text:
     raise newException(EvaluatorError, owner & "." & field & " must be text")
   entry.text
 
 proc listField(value: Value, field, owner: string): seq[Value] {.raises: [
     EvaluatorError].} =
-  if value.kind != Dictionary or field notin value.entries:
+  if value.kind != Record or not value.hasKey(field):
     raise newException(EvaluatorError, owner & " is missing " & field)
-  let entry = value.entries.getOrDefault(field)
+  let entry = value[field]
   if entry.kind != List:
     raise newException(EvaluatorError, owner & "." & field & " must be a list")
-  entry.listSeq
+  entry.toSeq
 
 proc toolbarValue(kind: string, fields: openArray[(string, Value)]): Value =
   var entries = initTable[string, Value]()
   entries["kind"] = text(kind)
   for (name, value) in fields:
     entries[name] = value
-  dictionary(entries)
+  record(entries)
 
 proc evalBodyList(env: Environment, bodyNodes: seq[SyntaxNode]): Value {.
     raises: [EvaluatorError].} =
@@ -436,7 +441,7 @@ widget toolbar*(
 
   if vertical:
     ui.column(ui.id("root", model.id), cfg(width = fit(), height = fill(),
-        gap = 6, alignItems = AlignCenter)):
+        gap = 6, alignItems = Center)):
       for index in 0 ..< spacerIndex:
         renderControl(index)
       if spacerIndex < model.controls.len:
@@ -445,7 +450,7 @@ widget toolbar*(
           renderControl(index)
   else:
     ui.menuBar(ui.id("root", model.id), cfg(width = fill(), height = fit(),
-        gap = 2, alignItems = AlignCenter)):
+        gap = 2, alignItems = Center)):
       for index in 0 ..< spacerIndex:
         renderControl(index)
       if spacerIndex < model.controls.len:
@@ -493,7 +498,7 @@ widget toolbarDock*(
 
   if hasBars and vertical:
     ui.row(ui.id("dock", $dock), cfg(width = fit(), height = fill(), gap = 0,
-        alignSelf = AlignStretch)):
+        alignSelf = Stretch)):
       for index in 0 ..< model.bars.len:
         if model.bars[index].dock == dock:
           for event in ui.toolbar(model.bars[index], runtime, libraryRoot):
@@ -508,5 +513,5 @@ widget toolbarDock*(
 
 widget statusbar*(runtime: NestOwlRuntime):
   ui.row(ui.id("statusbar"), cfg(width = fill(), height = fit(), gap = 8,
-      alignItems = AlignCenter)):
+      alignItems = Center)):
     runtime.renderWidget(ui, "", "nide-statusbar")

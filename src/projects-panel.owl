@@ -19,7 +19,7 @@ fun project-card project active:
     height = fit
     padding = 8
     gap = 6
-    alignItems = AlignStretch
+    alignItems = Stretch
     background = (pick active (color 31 68 70) (color 31 34 38))
     shadow = active
     label (id cardID "name") project.name:
@@ -30,7 +30,7 @@ fun project-card project active:
       width = fill
       height = fit
       gap = 6
-      alignItems = AlignCenter
+      alignItems = Center
       when (not active):
         button openID "Load":
           width = fill
@@ -62,13 +62,13 @@ widget projects-panel:
     height = fill
     padding = 8
     gap = 8
-    alignItems = AlignStretch
+    alignItems = Stretch
     background = color 25 28 32
     column (id "projects" "header"):
       width = fill
       height = fit
       gap = 6
-      alignItems = AlignStretch
+      alignItems = Stretch
       label (id "projects" "title") "Projects":
         width = fill
         height = fit
@@ -90,7 +90,7 @@ widget projects-panel:
       height = fill
       gap = 8
       scrollY = true
-      alignItems = AlignStretch
+      alignItems = Stretch
       for project (iter projects):
         when (project-matches project query):
           project-card project (= project.name activeProject)

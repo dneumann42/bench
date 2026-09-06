@@ -131,7 +131,7 @@ fun project-profile-dialog project templates:
     height = fit
     padding = 12
     gap = 10
-    alignItems = AlignStretch
+    alignItems = Stretch
     background = color 30 34 38
     dialogHeader (id "project-toolbar" "dialog-header"):
       width = fill
@@ -144,7 +144,7 @@ fun project-profile-dialog project templates:
       width = fill
       height = fit
       gap = 8
-      alignItems = AlignCenter
+      alignItems = Center
       label (id "project-toolbar" "template-label") "Template":
         width = fixed 86
         height = fit
@@ -155,7 +155,7 @@ fun project-profile-dialog project templates:
       width = fill
       height = fit
       gap = 8
-      alignItems = AlignCenter
+      alignItems = Center
       label (id "project-toolbar" "name-label") "Name":
         width = fixed 86
         height = fit
@@ -166,7 +166,7 @@ fun project-profile-dialog project templates:
       width = fill
       height = fit
       gap = 8
-      alignItems = AlignCenter
+      alignItems = Center
       label (id "project-toolbar" "build-label") "Build":
         width = fixed 86
         height = fit
@@ -177,7 +177,7 @@ fun project-profile-dialog project templates:
       width = fill
       height = fit
       gap = 8
-      alignItems = AlignCenter
+      alignItems = Center
       label (id "project-toolbar" "run-label") "Run":
         width = fixed 86
         height = fit
@@ -188,7 +188,7 @@ fun project-profile-dialog project templates:
       width = fill
       height = fit
       gap = 8
-      alignItems = AlignCenter
+      alignItems = Center
       label (id "project-toolbar" "check-label") "Check":
         width = fixed 86
         height = fit
@@ -199,7 +199,7 @@ fun project-profile-dialog project templates:
       width = fill
       height = fit
       gap = 8
-      alignItems = AlignCenter
+      alignItems = Center
       label (id "project-toolbar" "format-label") "Format":
         width = fixed 86
         height = fit
@@ -210,7 +210,7 @@ fun project-profile-dialog project templates:
       width = fill
       height = fit
       gap = 8
-      justifyContent = JustifyEnd
+      justifyContent = End
       button cancelID "Cancel":
         width = fixed 86
         height = fit
@@ -248,7 +248,7 @@ widget project-toolbar:
     width = fit
     height = fit
     gap = 6
-    alignItems = AlignCenter
+    alignItems = Center
     when (not (= project nothing)):
       label (id "project-toolbar" "project-name") project.name:
         width = fit
